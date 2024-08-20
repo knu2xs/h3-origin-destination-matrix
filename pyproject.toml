@@ -10,7 +10,7 @@ authors = [
 ]
 description = "Create an origin-destination matrix using H3 indices."
 readme = "README.md"
-requires-python = ">=3.6, <=3.11"
+requires-python = ">=3.9, <=3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
@@ -20,7 +20,8 @@ dependencies = [
     "arcgis>=2.2.0",
     "numpy>=1.7",
     "pandas>=1.0.5",
-    "pyarrow>=1.0.0"
+    "pyarrow>=1.0.0",
+    "h3>=4.0.0b3"
 ]
 
 [tool.setuptools.packages.find]
