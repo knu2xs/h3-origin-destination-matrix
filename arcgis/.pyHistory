@@ -1,0 +1,15 @@
+﻿Country('US')
+from arcgis.geoenrichment import Country
+Country('US')
+Country.properties
+Country.properties.__dict__
+Country.properties.__dir__
+Country.properties.__dir__()
+Country.properties.keys()
+Country.properties.network_dataset
+from arcpy._ba import Country
+import arcpy._ba as ba
+ba.C
+ba.CountryInfo()
+ba.CountryInfo('US')
+ba.CountryInfo('US').__dict__

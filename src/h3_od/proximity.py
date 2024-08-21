@@ -231,6 +231,7 @@ def get_origin_destination_distance_parquet(
     parquet_path: Union[str, Path],
     origin_id_column: Optional[str] = None,
     destination_id_column: Optional[str] = None,
+    network_dataset: Optional[Path] = None,
     travel_mode: Optional[str] = "Walking Distance",
     max_distance: Optional[float] = 5.0,
     search_distance: Optional[float] = 0.25,
@@ -246,6 +247,7 @@ def get_origin_destination_distance_parquet(
         parquet_path: Path where the origin-destination table will be saved as Parquet.
         origin_id_column: String column in input data with unique identifiers for each origin location.
         destination_id_column: String column in input data with unique identifiers for each destination.
+        network_dataset: Optional path to network dataset to use.
         travel_mode: Travel mode to use with the network dataset. Default is ``Walking Distance``.
         max_distance: Maximum distance (in miles) to search from the origin to the destinations. Default is `5.0`.
         search_distance: Distance to search from the origin or destination locations to find a routable edge.
@@ -259,6 +261,20 @@ def get_origin_destination_distance_parquet(
     """
     # variable for network dataset layer name - potentially change if collisions occur
     nds_lyr_nm = "nds_lyr"
+
+    # use the default network dataset if not provided
+    if network_dataset is None:
+        network_dataset = Country(iso2).properties.network_path
+
+    # ensure path for network dataset is a string for geoprocessing
+    if isinstance(network_dataset, Path):
+        network_dataset = str(network_dataset)
+
+    # check to ensure network dataset exists
+    if not arcpy.Exists(network_dataset):
+        raise FileNotFoundError(
+            f"Cannot locate or access network dataset at {network_dataset}."
+        )
 
     # ensure paths are actual path objects
     origin_features = (
@@ -282,15 +298,15 @@ def get_origin_destination_distance_parquet(
         destination_id_column = "oid"
 
     # create a network dataset layer
-    arcpy.nax.MakeNetworkDatasetLayer(Country(iso2).properties.network_path, nds_lyr_nm)
+    nds_lyr = arcpy.nax.MakeNetworkDatasetLayer(network_dataset)[0]
     logging.debug("Created network dataset layer.")
 
     # instantiate origin-destination cost matrix solver object
-    odcm = arcpy.nax.OriginDestinationCostMatrix(nds_lyr_nm)
+    odcm = arcpy.nax.OriginDestinationCostMatrix(nds_lyr)
     logging.debug("Created origin-destination cost matrix object.")
 
     # set the desired travel mode for analysis
-    nd_travel_modes = arcpy.nax.GetTravelModes(nds_lyr_nm)
+    nd_travel_modes = arcpy.nax.GetTravelModes(nds_lyr)
     odcm.travelMode = nd_travel_modes[travel_mode]
     logging.debug(f'Origin-destination cost matrix travel mode set to "{travel_mode}"')
 
@@ -483,9 +499,8 @@ def get_origin_destination_distance_parquet(
             # https://arrow.apache.org/docs/python/generated/pyarrow.parquet.ParquetDataset.html
             pq.write_to_dataset(
                 solve_tbl,
-                use_legacy_dataset=False,
                 root_path=parquet_path,
-                partition_cols=[origin_id_column],
+                partition_cols=["origin_id"],
                 compression="snappy",
                 existing_data_behavior="overwrite_or_ignore",
             )
@@ -501,7 +516,6 @@ def get_origin_destination_distance_parquet(
             )
             pq.write_to_dataset(
                 solve_tbl,
-                use_legacy_dataset=False,
                 root_path=parquet_path,
                 compression="snappy",
                 existing_data_behavior="overwrite_or_ignore",
@@ -522,6 +536,7 @@ def get_h3_origin_destination_distance_parquet(
     h3_features: Union[str, Path, List[str]],
     parquet_path: Union[str, Path],
     h3_index_column: str = "GRID_ID",
+    network_dataset: Optional[Path] = None,
     travel_mode: str = "Walking Distance",
     max_distance: float = 5.0,
     search_distance: float = 1.0,
@@ -533,6 +548,7 @@ def get_h3_origin_destination_distance_parquet(
         h3_features: Path to H3 feature class created for area of interest using ArcGIS Pro.
         parquet_path: Path where the origin-destination table will be saved as Parquet.
         h3_index_column: Column in H3 feature class containing the H3 indices. Default is ``GRID_ID``.
+        network_dataset: Optional path to network dataset to use.
         travel_mode: Travel mode to use with the network dataset. Default is ``Walking Distance``.
         max_distance: Maximum distance (in miles) to search from the origin to the destinations. Default is `5.0`.
         search_distance: Distance to search from the origin or destination locations to find a routable edge.
@@ -546,6 +562,7 @@ def get_h3_origin_destination_distance_parquet(
         origin_id_column=h3_index_column,
         destination_features=h3_features,
         destination_id_column=h3_index_column,
+        network_dataset=network_dataset,
         parquet_path=parquet_path,
         travel_mode=travel_mode,
         max_distance=max_distance,
@@ -784,6 +801,7 @@ def get_aoi_h3_origin_destination_distance_parquet(
     h3_resolution: int,
     parquet_path: Union[str, Path],
     # h3_index_column: Optional[str] = "h3_idx",
+    network_dataset: Optional[Path] = None,
     travel_mode: Optional[str] = "Walking Distance",
     max_distance: Optional[float] = 5.0,
     search_distance: Optional[float] = 1.0,
@@ -796,7 +814,7 @@ def get_aoi_h3_origin_destination_distance_parquet(
             an origin-destination matrix for using H3 indices.
         h3_resolution: H3 resolution to use when generating an origin-destination matrix.
         parquet_path: Path where the origin-destination table will be saved as Parquet.
-
+        network_dataset: Optional path to network dataset to use.
         travel_mode: Travel mode to use with the network dataset. Default is ``Walking Distance``.
         max_distance: Maximum distance (in miles) to search from the origin to the destinations. Default is `5.0`.
         search_distance: Distance to search from the origin or destination locations to find a routable edge.
@@ -849,24 +867,24 @@ def get_aoi_h3_origin_destination_distance_parquet(
     # create a set to store potential destination indices
     h3_dest_set = set()
 
-    # break the list of h3 origin indices into batches and iterate
-    for h3_origin_batch in itertools.combinations(h3_origin_tpl, origin_batch_size):
-        # iterate the batch geometries
-        for h3_origin in h3_origin_batch:
-            # get potential destinations for the origin
-            h3_dest_lst = h3.grid_disk(h3_origin)
+    # get all the neighbors for the origin h3 indices
+    for h3_origin in h3_origin_tpl:
+        # get potential destinations for the origin
+        h3_dest_lst = h3.grid_disk(h3_origin)
 
-            # add potential destinations indices to the set (eliminates duplicates)
-            for h3_dest in h3_dest_lst:
-                h3_dest_set.add(h3_dest)
+        # add potential destinations indices to the set (eliminates duplicates)
+        for h3_dest in h3_dest_lst:
+            h3_dest_set.add(h3_dest)
 
-            # solve the batch and save the incremental result
-            get_origin_destination_distance_parquet(
-                origin_features=h3_origin_batch,
-                destination_features=list(h3_dest_set),
-                parquet_path=parquet_path,
-                travel_mode=travel_mode,
-                max_distance=max_distance,
-                search_distance=search_distance,
-                partition_by_origin=True,
-            )
+    # solve the batch and save the incremental result
+    get_origin_destination_distance_parquet(
+        origin_features=h3_origin_tpl,
+        destination_features=tuple(h3_dest_set),
+        parquet_path=parquet_path,
+        network_dataset=network_dataset,
+        travel_mode=travel_mode,
+        max_distance=max_distance,
+        search_distance=search_distance,
+        origin_batch_size=origin_batch_size,
+        partition_by_origin=True,
+    )

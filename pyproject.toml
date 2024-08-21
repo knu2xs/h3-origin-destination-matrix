@@ -18,10 +18,7 @@ classifiers = [
 license = {file = "LICENSE"}
 dependencies = [
     "arcgis>=2.2.0",
-    "numpy>=1.7",
-    "pandas>=1.0.5",
-    "pyarrow>=1.0.0",
-    "h3>=4.0.0b3"
+    "h3==4.0.0b3"
 ]
 
 [tool.setuptools.packages.find]

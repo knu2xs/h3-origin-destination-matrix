@@ -49,6 +49,7 @@ config.read("config.ini")
 log_level = config.get("DEFAULT", "LOG_LEVEL")
 aoi_features = dir_prj / config.get("DEFAULT", "AOI_POLYGON")
 od_parquet = dir_prj / config.get("DEFAULT", "OUTPUT_OD_PARQUET")
+network_dataset = Path(config.get("DEFAULT", "NETWORK_DATASET"))
 
 # path for saving logging
 dt_str = datetime.datetime.now().strftime("%Y%m%d%H%M")
@@ -62,6 +63,7 @@ h3_od.proximity.get_aoi_h3_origin_destination_distance_parquet(
     area_of_interest=aoi_features,
     parquet_path=od_parquet,
     h3_resolution=10,
+    network_dataset=network_dataset,
     travel_mode="Walking Distance",
     max_distance=5.0,
     search_distance=1.0,
