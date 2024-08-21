@@ -196,7 +196,35 @@ def get_origin_destination_oid_col(
     return id_column
 
 
-def get_network_travel_modes(network_dataset: Optional[Path] = None) -> dict:
+def get_network_dataset_layer(
+    network_dataset: Optional[Path] = None,
+) -> arcpy._mp.Layer:
+    """
+    Get a network dataset layer, optionally using default.
+    Args:
+        network_dataset: Optional path to network dataset being used.
+
+    .. note::
+        If not specified, uses network solver set in Environment settings.
+
+    Returns:
+        NAX Layer.
+    """
+    # get the path to the country network dataset if it does not exist
+    if network_dataset is None:
+        network_dataset = Country(iso2).properties.network_path
+
+    # ensure is string for GP
+    if isinstance(network_dataset, Path):
+        network_dataset = str(network_dataset)
+
+    # create a network dataset layer
+    nds_lyr = arcpy.nax.MakeNetworkDatasetLayer(network_dataset)[0]
+
+    return nds_lyr
+
+
+def get_network_travel_modes(network_dataset: Optional[Path] = None) -> list:
     """
     Get the travel modes, which can be used when solving for a network.
 
@@ -209,18 +237,14 @@ def get_network_travel_modes(network_dataset: Optional[Path] = None) -> dict:
     Returns:
 
     """
-    # variable for network dataset layer name - potentially change if collisions occur
-    nds_lyr_nm = "nds_lyr"
-
-    # get the path to the country network dataset if it does not exist
-    if network_dataset is None:
-        network_dataset = Country(iso2).properties.network_path
-
-    # create a network dataset layer
-    arcpy.nax.MakeNetworkDatasetLayer(network_dataset, nds_lyr_nm)
+    # get the network dataset layer
+    nds_lyr = get_network_dataset_layer(network_dataset)
 
     # retrieve the network dataset travel modes
-    nd_travel_modes = arcpy.nax.GetTravelModes(nds_lyr_nm)
+    nd_travel_modes = arcpy.nax.GetTravelModes(nds_lyr)
+
+    # get the travel modes as a list
+    nd_travel_modes = list(nd_travel_modes.keys())
 
     return nd_travel_modes
 
@@ -367,6 +391,10 @@ def get_origin_destination_distance_parquet(
         destination_features = str(destination_features)
     dest_lyr = arcpy.management.MakeFeatureLayer(destination_features)[0]
 
+    # make sure the location to save the parquet exists
+    if not parquet_path.exists():
+        parquet_path.mkdir(parents=True)
+
     # iterate the number of times it takes to process all the input features
     for batch_idx in range(origin_batch_cnt):
         logging.info(
@@ -489,7 +517,7 @@ def get_origin_destination_distance_parquet(
             "Completed exporting the origin-destination result to an Arrow table."
         )
 
-        # if batching the processing, or want the data otherwise organized by the origins
+        # if  want the data organized by the origins
         if partition_by_origin:
             logging.debug(
                 f"Starting to save the origin-destination cost matrix parquet to {parquet_path} and partition using "
