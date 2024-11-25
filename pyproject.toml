@@ -17,8 +17,8 @@ classifiers = [
 ]
 license = {file = "LICENSE"}
 dependencies = [
-    "arcgis>=2.2.0",
-    "h3==4.0.0b3"
+    "arcgis>=2.4.0",
+    "h3==4.1.*"
 ]
 
 [tool.setuptools.packages.find]

@@ -193,13 +193,13 @@ def get_h3_indices_for_esri_polygon(geom: arcpy.Polygon, resolution: int) -> Set
 
 def get_esri_polygon_for_h3_index(h3_index: Union[str, int]) -> arcpy.Polygon:
     """
-    For a single H3 index, get the ArcPy geometry for the index.
+    For a single H3 index, get the ArcPy polygon geometry for the index.
 
     Args:
         h3_index: H3 index.
 
     Returns:
-        ArcPy Polygon geometry for the index.
+        ArcPy polygon geometry for the index.
     """
     # if the input value the H3 numeric value as a string, convert to integer
     if isinstance(h3_index, str):
@@ -215,6 +215,36 @@ def get_esri_polygon_for_h3_index(h3_index: Union[str, int]) -> arcpy.Polygon:
     # create an ArcPy geometry object for the index
     geom = arcpy.Polygon(
         inputs=arcpy.Array([arcpy.Point(coords[1], coords[0]) for coords in coord_lst]),
+        spatial_reference=arcpy.SpatialReference(4326),
+    )
+
+    return geom
+
+
+def get_esri_point_for_h3_index(h3_index: Union[str, int]) -> arcpy.PointGeometry:
+    """
+    For a single H3 index, get the ArcPy point geometry for the index.
+
+    Args:
+        h3_index: H3 index.
+
+    Returns:
+        ArcPy point geometry for the index.
+    """
+    # if the input value the H3 numeric value as a string, convert to integer
+    if isinstance(h3_index, str):
+        if h3_index.isnumeric():
+            h3_index = int(h3_index)
+
+    # convert the index by using the correct method based on the input index format
+    if isinstance(h3_index, int):
+        coords = h3_int.cell_to_latlng(h3_index)
+    else:
+        coords = h3.cell_to_latlng(h3_index)
+
+    # convert to the coordinates to a point geometry
+    geom = arcpy.PointGeometry(
+        inputs=arcpy.Point(coords[1], coords[0]),
         spatial_reference=arcpy.SpatialReference(4326),
     )
 

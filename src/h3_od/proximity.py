@@ -7,10 +7,10 @@ Proximity streamlines the process of calculating distance metrics using Esri Net
 __all__ = [
     "get_distance_between_h3_indices",
     "get_distance_between_coordinates_using_h3",
-    "get_h3_origin_destination_distance_parquet",
+    "get_origin_destination_distance_parquet_from_arcgis_features",
     "get_h3_neighbors",
     "get_nearest_origin_destination_neighbor",
-    "get_origin_destination_distance_parquet",
+    "get_origin_destination_parquet",
     "get_origin_destination_neighbors",
 ]
 
@@ -218,13 +218,21 @@ def get_network_dataset_layer(
     if isinstance(network_dataset, Path):
         network_dataset = str(network_dataset)
 
+    # check to ensure network dataset exists
+    if not arcpy.Exists(network_dataset):
+        raise FileNotFoundError(
+            f"Cannot locate or access network dataset at {network_dataset}."
+        )
+
     # create a network dataset layer
     nds_lyr = arcpy.nax.MakeNetworkDatasetLayer(network_dataset)[0]
 
     return nds_lyr
 
 
-def get_network_travel_modes(network_dataset: Optional[Path] = None) -> list:
+def get_network_travel_modes(
+    network_dataset: Optional[Path] = None,
+) -> List[str]:
     """
     Get the travel modes, which can be used when solving for a network.
 
@@ -249,80 +257,27 @@ def get_network_travel_modes(network_dataset: Optional[Path] = None) -> list:
     return nd_travel_modes
 
 
-def get_origin_destination_distance_parquet(
-    origin_features: Union[str, Path, Iterable, pd.DataFrame],
-    destination_features: Union[str, Path, Iterable, pd.DataFrame],
-    parquet_path: Union[str, Path],
-    origin_id_column: Optional[str] = None,
-    destination_id_column: Optional[str] = None,
+def get_origin_destination_cost_matrix_solver(
     network_dataset: Optional[Path] = None,
     travel_mode: Optional[str] = "Walking Distance",
     max_distance: Optional[float] = 5.0,
     search_distance: Optional[float] = 0.25,
-    origin_batch_size: Optional[int] = 40000,
-    partition_by_origin: Optional[bool] = True,
-) -> Path:
+) -> arcpy._na._odcms.OriginDestinationCostMatrix:
     """
-    Create an origin-destination matrix and save it to parquet.
+
 
     Args:
-        origin_features: Origin features, the starting locations, for the origin-destination solve.
-        destination_features: Destination features, the ending locations, for the origin-destination solve.
-        parquet_path: Path where the origin-destination table will be saved as Parquet.
-        origin_id_column: String column in input data with unique identifiers for each origin location.
-        destination_id_column: String column in input data with unique identifiers for each destination.
         network_dataset: Optional path to network dataset to use.
         travel_mode: Travel mode to use with the network dataset. Default is ``Walking Distance``.
         max_distance: Maximum distance (in miles) to search from the origin to the destinations. Default is `5.0`.
         search_distance: Distance to search from the origin or destination locations to find a routable edge.
             Default is `0.25`.
-        origin_batch_size: Number of origin locations to use per origin-destination solve. If experiencing memory
-            overruns, reduce the batch size. The default is 40,000.
-        partition_by_origin: If desired to partition the output by the ``origin_id_column``.
 
     Returns:
-        Path to where Parquet dataset is saved.
+        ArcPy NAX Origin-Destination Matrix Solver.
     """
-    # variable for network dataset layer name - potentially change if collisions occur
-    nds_lyr_nm = "nds_lyr"
-
-    # use the default network dataset if not provided
-    if network_dataset is None:
-        network_dataset = Country(iso2).properties.network_path
-
-    # ensure path for network dataset is a string for geoprocessing
-    if isinstance(network_dataset, Path):
-        network_dataset = str(network_dataset)
-
-    # check to ensure network dataset exists
-    if not arcpy.Exists(network_dataset):
-        raise FileNotFoundError(
-            f"Cannot locate or access network dataset at {network_dataset}."
-        )
-
-    # ensure paths are actual path objects
-    origin_features = (
-        Path(origin_features) if isinstance(origin_features, str) else origin_features
-    )
-    destination_features = (
-        Path(destination_features)
-        if isinstance(destination_features, str)
-        else destination_features
-    )
-    parquet_path = Path(parquet_path) if isinstance(parquet_path, str) else parquet_path
-
-    # validate origin and destination geometry types, and if H3 indices, add geometries
-    origin_features = validate_origin_destination_inputs(origin_features)
-    destination_features = validate_origin_destination_inputs(destination_features)
-
-    # if validation created feature sets, the unique identifier columns will be set to 'oid'
-    if isinstance(origin_features, arcpy.FeatureSet):
-        origin_id_column = "oid"
-    if isinstance(destination_features, arcpy.FeatureSet):
-        destination_id_column = "oid"
-
     # create a network dataset layer
-    nds_lyr = arcpy.nax.MakeNetworkDatasetLayer(network_dataset)[0]
+    nds_lyr = arcpy.nax.MakeNetworkDatasetLayer(str(network_dataset))[0]
     logging.debug("Created network dataset layer.")
 
     # instantiate origin-destination cost matrix solver object
@@ -361,19 +316,46 @@ def get_origin_destination_distance_parquet(
     odcm.lineShapeType = arcpy.nax.LineShapeType.NoLine
     logging.debug("Origin-destination cost matrix set to not return line geometry.")
 
-    # get origin unique id column if not explicitly provided
-    origin_id_column = get_origin_destination_oid_col(origin_features, origin_id_column)
-    destination_id_column = get_origin_destination_oid_col(
-        destination_features, destination_id_column
+    return odcm
+
+
+def get_origin_destination_parquet(
+    origin_h3_indices: Iterable,
+    destination_h3_indices: Iterable,
+    parquet_path: Union[str, Path],
+    network_dataset: Optional[Path] = None,
+    travel_mode: Optional[str] = "Walking Distance",
+    max_distance: Optional[float] = 5.0,
+    search_distance: Optional[float] = 0.25,
+    origin_batch_size: Optional[int] = 40000,
+    partition_by_origin: Optional[bool] = True,
+) -> Path:
+    """
+    Create an origin-destination matrix between two lists of H3 indices and save to parquet.
+
+    Args:
+        origin_h3_indices: Origin H3 indices, the starting locations, for the origin-destination solve.
+        destination_h3_indices: Destination H3 indices, the ending locations, for the origin-destination solve.
+        parquet_path: Path where the origin-destination table will be saved as Parquet.
+        network_dataset: Optional path to network dataset to use.
+        travel_mode: Travel mode to use with the network dataset. Default is ``Walking Distance``.
+        max_distance: Maximum distance (in miles) to search from the origin to the destinations. Default is `5.0`.
+        search_distance: Distance to search from the origin or destination locations to find a routable edge.
+            Default is `0.25`.
+        origin_batch_size: Number of origin locations to use per origin-destination solve. If experiencing memory
+            overruns, reduce the batch size. The default is 40,000.
+        partition_by_origin: If desired to partition the output by the ``origin_id_column``.
+
+    Returns:
+        Path to where Parquet dataset is saved.
+    """
+    # get the od cost matrix solver
+    odcm = get_origin_destination_cost_matrix_solver(
+        network_dataset, travel_mode, max_distance, search_distance
     )
 
-    # get oid list for the input features to use for batching if not explicitly provided
-    oid_lst = [
-        r[0] for r in arcpy.da.SearchCursor(str(origin_features), origin_id_column)
-    ]
-
     # get the count of input features for batching
-    origin_cnt = len(oid_lst)
+    origin_cnt = len(origin_h3_indices)
 
     # batch the solve based on the input feature count
     origin_batch_cnt = math.ceil(origin_cnt / origin_batch_size)
@@ -381,15 +363,6 @@ def get_origin_destination_distance_parquet(
     logging.info(
         f"The origin-destination matrix solution will require {origin_batch_cnt:,} iterations."
     )
-
-    # create a layers to use for speeding up the batching
-    if isinstance(origin_features, Path):
-        origin_features = str(origin_features)
-    origin_lyr = arcpy.management.MakeFeatureLayer(origin_features)[0]
-
-    if isinstance(destination_features, Path):
-        destination_features = str(destination_features)
-    dest_lyr = arcpy.management.MakeFeatureLayer(destination_features)[0]
 
     # make sure the location to save the parquet exists
     if not parquet_path.exists():
@@ -404,70 +377,78 @@ def get_origin_destination_distance_parquet(
         # create a list of the object identifiers in the input data for this batch
         start_idx = batch_idx * origin_batch_size
         end_idx = start_idx + origin_batch_size
-        batch_oid_lst = oid_lst[start_idx:end_idx]
+        batch_origin_lst = origin_h3_indices[start_idx:end_idx]
 
-        # use the list of object identifiers to create an sql string to use for identifying features
-        if isinstance(batch_oid_lst[0], str):
-            oid_str_lst = [f"'{oid}'" for oid in batch_oid_lst]
-        else:
-            oid_str_lst = [f"{oid}" for oid in batch_oid_lst]
-
-        oid_str = ",".join(oid_str_lst)
-        sql_str = f"{origin_id_column} IN ({oid_str})"
-
-        # apply the selection to the origin features
-        arcpy.management.SelectLayerByAttribute(
-            origin_lyr, selection_type="NEW_SELECTION", where_clause=sql_str
+        # get the k-distance to search around the origins for the neighbors; add 10% to ensure catching everything
+        idx_res = h3.get_resolution(batch_origin_lst[0])
+        idx_edge_len = (
+            h3.average_hexagon_edge_length(idx_res, unit="km") * 0.6213711922 * 1.1
         )
+        k_dist = math.ceil(max_distance / idx_edge_len)
 
-        # select destination features within the 120% of the distance (straight line) of the origin features
-        sel_dist = max_distance * 1.2
-        arcpy.management.SelectLayerByLocation(
-            dest_lyr,
-            overlap_type="WITHIN_A_DISTANCE",
-            select_features=origin_lyr,
-            search_distance=f"{sel_dist} Miles",
-            selection_type="NEW_SELECTION",
-        )
+        # variable for batch_destinations
+        batch_dest_lst = []
 
         # create an NAX insert cursor to load the origin locations with centroids to allow more flexible geometry input
         with odcm.insertCursor(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Origins,
             ["Name", "SHAPE@XY"],
         ) as insert_origin:
-            # use a search cursor to get the starting locations with unique identifiers (using centroids)
-            for origin_row in arcpy.da.SearchCursor(
-                origin_lyr, [origin_id_column, "SHAPE@XY"]
-            ):
+            # iterate the origin h3 indices
+            for loop_idx, origin_idx in enumerate(batch_origin_lst):
+                # create the geometry on the fly
+                geom = h3_arcpy.get_esri_point_for_h3_index(origin_idx)
+
+                # build the row using the h3 index
+                origin_row = [origin_idx, geom]
+
                 # load the location
                 insert_origin.insertRow(origin_row)
 
+                # get the neighbor
+
+                # get indices within K distance of the batch origins
+                dest_set = set(
+                    itertools.chain(
+                        *(h3.grid_disk(idx, k_dist) for idx in batch_origin_lst)
+                    )
+                )
+
+                # find indices in destination indices within the search radius
+                dest_set.intersection_update(destination_h3_indices)
+
+                # add the set to the destination list
+                batch_dest_lst.append(dest_set)
+
+                logging.debug(
+                    f"Index {loop_idx + 1} of {len(batch_origin_lst)} ({origin_idx}) done."
+                )
+
         logging.debug(
-            f"Loaded {len(batch_oid_lst):,} origin features into the origin-destination solver "
-            f"from {origin_features}."
+            f"Loaded {len(batch_origin_lst):,} origin features into the origin-destination solver."
         )
+
+        # collapse the nested iterables into a non-repeating iterable
+        batch_dest_set = set(itertools.chain(*batch_dest_lst))
 
         # create an input cursor for the destinations, again using centroids
         with odcm.insertCursor(
             arcpy.nax.OriginDestinationCostMatrixInputDataType.Destinations,
             ["Name", "SHAPE@XY"],
         ) as insert_dest:
-            # counter for added records
-            dest_add_cnt = 0
+            # iterate the destination h3 indices
+            for dest_idx in batch_dest_set:
+                # create the geometry on the fly
+                geom = h3_arcpy.get_esri_point_for_h3_index(dest_idx)
 
-            # use a search cursor to get the starting locations with unique identifiers (using centroids)
-            for dest_row in arcpy.da.SearchCursor(
-                dest_lyr, [destination_id_column, "SHAPE@XY"]
-            ):
+                # create the row using the h3 index
+                dest_row = [dest_idx, geom]
+
                 # load the location
                 insert_dest.insertRow(dest_row)
 
-                # index the counter
-                dest_add_cnt += 1
-
             logging.debug(
-                f"Loaded {dest_add_cnt:,} destination candidates into the origin-destination solver "
-                f"from {destination_features}."
+                f"Loaded {len(batch_dest_set):,} destination candidates into the origin-destination solver."
             )
 
         # solve the origin-destination matrix
@@ -520,8 +501,8 @@ def get_origin_destination_distance_parquet(
         # if  want the data organized by the origins
         if partition_by_origin:
             logging.debug(
-                f"Starting to save the origin-destination cost matrix parquet to {parquet_path} and partition using "
-                f'the origin id column "{origin_id_column}"'
+                f"Starting to save the origin-destination cost matrix parquet to {parquet_path} and partition by the"
+                f"origin H3 index."
             )
             # https://arrow.apache.org/docs/python/generated/pyarrow.dataset.partitioning.html
             # https://arrow.apache.org/docs/python/generated/pyarrow.parquet.ParquetDataset.html
@@ -560,8 +541,8 @@ def get_origin_destination_distance_parquet(
     return parquet_path
 
 
-def get_h3_origin_destination_distance_parquet(
-    h3_features: Union[str, Path, List[str]],
+def get_origin_destination_distance_parquet_from_arcgis_features(
+    h3_features: Union[str, Path],
     parquet_path: Union[str, Path],
     h3_index_column: str = "GRID_ID",
     network_dataset: Optional[Path] = None,
@@ -570,7 +551,7 @@ def get_h3_origin_destination_distance_parquet(
     search_distance: float = 1.0,
 ) -> Path:
     """
-    Create an origin-destination matrix and save it to parquet.
+    Create an origin-destination matrix from ArcGIS features, a Feature Class with H3 indices, and save it to parquet.
 
     Args:
         h3_features: Path to H3 feature class created for area of interest using ArcGIS Pro.
@@ -585,11 +566,18 @@ def get_h3_origin_destination_distance_parquet(
     Returns:
         Path to where Parquet dataset is saved.
     """
-    parquet_path = get_origin_destination_distance_parquet(
-        origin_features=h3_features,
-        origin_id_column=h3_index_column,
-        destination_features=h3_features,
-        destination_id_column=h3_index_column,
+    # make the path a string for geoprocessing tools
+    if isinstance(h3_features, Path):
+        h3_features = str(h3_features)
+
+    # get the list of unique H3 indices from the feature class using a Python set
+    h3_lst = list(
+        set(r[0] for r in arcpy.da.SearchCursor(h3_features, h3_index_column))
+    )
+
+    parquet_path = get_origin_destination_parquet(
+        origin_h3_indices=h3_lst,
+        destination_h3_indices=h3_lst,
         network_dataset=network_dataset,
         parquet_path=parquet_path,
         travel_mode=travel_mode,
@@ -598,11 +586,6 @@ def get_h3_origin_destination_distance_parquet(
     )
 
     return parquet_path
-
-
-def get_arrow_dataset(parquet_path: Union[str, Path]) -> ds.Dataset:
-    ads = ds.dataset(parquet_path, format="parquet")
-    return ads
 
 
 def get_distance_between_h3_indices(
@@ -625,7 +608,9 @@ def get_distance_between_h3_indices(
     """
     # handle various ways origin-destination dataset can be provided, and ensure is PyArrow Dataset
     if not isinstance(origin_destination_dataset, ds.Dataset):
-        origin_destination_dataset = get_arrow_dataset(origin_destination_dataset)
+        origin_destination_dataset = ds.dataset(
+            origin_destination_dataset, format="parquet"
+        )
 
     # create the filter to find the record
     fltr = (pc.field("origin_id") == h3_origin) & (
@@ -640,7 +625,7 @@ def get_distance_between_h3_indices(
         if warn_on_fail:
             warn(
                 f"Cannot route between {h3_origin} and {h3_destination}. This may be due to the origin, destination "
-                f"or both being unroutable, simply too far apart, or possibly not using the correct resolution "
+                f"or both being un-routable, simply too far apart, or possibly not using the correct resolution "
                 f"indices."
             )
 
@@ -708,7 +693,9 @@ def get_h3_neighbors(
     """
     # handle various ways origin-destination dataset can be provided, and ensure is PyArrow Dataset
     if not isinstance(origin_destination_dataset, ds.Dataset):
-        origin_destination_dataset = get_arrow_dataset(origin_destination_dataset)
+        origin_destination_dataset = ds.dataset(
+            origin_destination_dataset, format="parquet"
+        )
 
     # create the filter for retrieving data
     fltr = (pc.field("origin_id") == h3_origin) & (
@@ -755,7 +742,9 @@ def get_origin_destination_neighbors(
     """
     # handle various ways origin-destination dataset can be provided, and ensure is PyArrow Dataset
     if not isinstance(origin_destination_dataset, ds.Dataset):
-        origin_destination_dataset = get_arrow_dataset(origin_destination_dataset)
+        origin_destination_dataset = ds.dataset(
+            origin_destination_dataset, format="parquet"
+        )
 
     # create the filter for retrieving data
     fltr = (pc.field("origin_id") == origin_id) & (
@@ -828,7 +817,6 @@ def get_aoi_h3_origin_destination_distance_parquet(
     area_of_interest: Union[str, Path, arcpy.Geometry, List[arcpy.Geometry]],
     h3_resolution: int,
     parquet_path: Union[str, Path],
-    # h3_index_column: Optional[str] = "h3_idx",
     network_dataset: Optional[Path] = None,
     travel_mode: Optional[str] = "Walking Distance",
     max_distance: Optional[float] = 5.0,
@@ -851,8 +839,6 @@ def get_aoi_h3_origin_destination_distance_parquet(
     Returns:
         Path to where Parquet dataset is saved.
     """
-    ### commented out parameter
-    # h3_index_column: Column in H3 feature class containing the H3 indices. Default is ``GRID_ID``.
 
     # setting input batch size
     origin_batch_size = 500
@@ -905,9 +891,9 @@ def get_aoi_h3_origin_destination_distance_parquet(
             h3_dest_set.add(h3_dest)
 
     # solve the batch and save the incremental result
-    get_origin_destination_distance_parquet(
-        origin_features=h3_origin_tpl,
-        destination_features=tuple(h3_dest_set),
+    pqt_pth = get_origin_destination_parquet(
+        origin_h3_indices=h3_origin_tpl,
+        destination_h3_indices=tuple(h3_dest_set),
         parquet_path=parquet_path,
         network_dataset=network_dataset,
         travel_mode=travel_mode,
@@ -916,3 +902,5 @@ def get_aoi_h3_origin_destination_distance_parquet(
         origin_batch_size=origin_batch_size,
         partition_by_origin=True,
     )
+
+    return pqt_pth

@@ -95,3 +95,6 @@ env/
 
 # exclude the docs build directory
 docs/
+
+# packaged environment
+/env.tar.bz2

@@ -5,7 +5,7 @@ channels:
   - conda-forge
 
 dependencies:
-  - arcgis
+  - arcgis>=2.4.0
   - black>=21
   - jupyterlab
   - jupyterlab_code_formatter
@@ -23,7 +23,7 @@ dependencies:
     - furo
     - nbsphinx
     - placekey
-    - h3>=4.0.0b3
+    - h3==4.1.*
     - sphinx
     - sphinxcontrib-youtube
     - sphinx-autodoc-typehints
