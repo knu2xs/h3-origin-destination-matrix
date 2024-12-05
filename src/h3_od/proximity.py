@@ -19,13 +19,16 @@ import logging
 import math
 import os
 import uuid
+from multiprocessing import cpu_count
 from pathlib import Path
 from typing import List, Union, Tuple, Optional, Iterable
 from warnings import warn
 
 import arcgis.geometry
+import numpy as np
 from arcgis.geoenrichment._business_analyst import Country
 import arcpy
+import dask.dataframe as dd
 import h3
 import pandas as pd
 import pyarrow as pa
@@ -287,7 +290,7 @@ def get_origin_destination_cost_matrix_solver(
     # set the desired travel mode for analysis
     nd_travel_modes = arcpy.nax.GetTravelModes(nds_lyr)
     odcm.travelMode = nd_travel_modes[travel_mode]
-    logging.debug(f'Origin-destination cost matrix travel mode set to "{travel_mode}"')
+    logging.info(f'Origin-destination cost matrix travel mode is "{travel_mode}"')
 
     # use miles for the distance units
     odcm.distanceUnits = arcpy.nax.DistanceUnits.Miles
@@ -320,39 +323,60 @@ def get_origin_destination_cost_matrix_solver(
 
 
 def get_origin_destination_parquet(
-    origin_h3_indices: Iterable,
-    destination_h3_indices: Iterable,
+    origin_h3_indices: Union[list, tuple],
     parquet_path: Union[str, Path],
+    destination_h3_indices: Optional[Iterable] = None,
     network_dataset: Optional[Path] = None,
     travel_mode: Optional[str] = "Walking Distance",
     max_distance: Optional[float] = 5.0,
     search_distance: Optional[float] = 0.25,
-    origin_batch_size: Optional[int] = 40000,
-    partition_by_origin: Optional[bool] = True,
+    origin_batch_size: Optional[int] = 250,
+    output_batch_size: Optional[int] = 250,
+    append: Optional[bool] = True,
 ) -> Path:
     """
     Create an origin-destination matrix between two lists of H3 indices and save to parquet.
 
     Args:
         origin_h3_indices: Origin H3 indices, the starting locations, for the origin-destination solve.
-        destination_h3_indices: Destination H3 indices, the ending locations, for the origin-destination solve.
         parquet_path: Path where the origin-destination table will be saved as Parquet.
+        destination_h3_indices: Destination H3 indices, the ending locations, for the origin-destination solve.
         network_dataset: Optional path to network dataset to use.
         travel_mode: Travel mode to use with the network dataset. Default is ``Walking Distance``.
-        max_distance: Maximum distance (in miles) to search from the origin to the destinations. Default is `5.0`.
+        max_distance: Maximum distance (in miles) to search from the origin to the destinations. Default is ``5.0``.
         search_distance: Distance to search from the origin or destination locations to find a routable edge.
             Default is `0.25`.
         origin_batch_size: Number of origin locations to use per origin-destination solve. If experiencing memory
-            overruns, reduce the batch size. The default is 40,000.
-        partition_by_origin: If desired to partition the output by the ``origin_id_column``.
+            overruns, reduce the batch size. The default is ``250``.
+        output_batch_size: Number of origin locations to output from a solve at a time. This frequently is the
+            bottleneck causing memory overruns, so if troubleshooting, try reducing this size first. The default is
+            ``50``.
+        append: Whether to append or replace existing results. The default is ``True``.
 
     Returns:
         Path to where Parquet dataset is saved.
     """
-    # get the od cost matrix solver
-    odcm = get_origin_destination_cost_matrix_solver(
-        network_dataset, travel_mode, max_distance, search_distance
-    )
+    # make sure the location to save the parquet exists
+    if not parquet_path.exists():
+        parquet_path.mkdir(parents=True)
+
+    # if appending, get the list of preexisting origin ids to not have to solve for
+    if append:
+        existing_origin_id_lst = [
+            pth.name.split("=")[-1] for pth in parquet_path.glob("**/origin_id=*")
+        ]
+        logging.debug(
+            f"{len(existing_origin_id_lst):,} origins already solved for in output parquet data."
+        )
+
+        original_len = len(origin_h3_indices)
+        if len(existing_origin_id_lst):
+            origin_h3_indices = [
+                idx for idx in origin_h3_indices if idx not in existing_origin_id_lst
+            ]
+            logging.debug(
+                f"Only have to solve for {len(origin_h3_indices):,} origins instead of {original_len:,}."
+            )
 
     # get the count of input features for batching
     origin_cnt = len(origin_h3_indices)
@@ -364,14 +388,20 @@ def get_origin_destination_parquet(
         f"The origin-destination matrix solution will require {origin_batch_cnt:,} iterations."
     )
 
-    # make sure the location to save the parquet exists
-    if not parquet_path.exists():
-        parquet_path.mkdir(parents=True)
+    # create the schema to use for converting the list to a pyarrow table, required for saving to parquet
+    pa_schema = pa.schema(
+        [
+            pa.field("origin_id", pa.string()),
+            pa.field("destination_id", pa.string()),
+            pa.field("distance_miles", pa.int64()),
+            pa.field("time", pa.int64()),
+        ]
+    )
 
     # iterate the number of times it takes to process all the input features
     for batch_idx in range(origin_batch_cnt):
         logging.info(
-            f"Starting the origin-destination cost matrix batch {batch_idx + 1} of {origin_batch_cnt:,}."
+            f"Starting the origin-destination cost matrix batch {(batch_idx + 1):,} of {origin_batch_cnt:,}."
         )
 
         # create a list of the object identifiers in the input data for this batch
@@ -386,8 +416,13 @@ def get_origin_destination_parquet(
         )
         k_dist = math.ceil(max_distance / idx_edge_len)
 
-        # variable for batch_destinations
-        batch_dest_lst = []
+        # get the destinations within a distance of the origins to lessen the workload on the solve
+        batch_dest_lst = h3_arcpy.get_k_neighbors(batch_origin_lst, k_dist)
+
+        # get an origin-destination cost matrix solver
+        odcm = get_origin_destination_cost_matrix_solver(
+            network_dataset, travel_mode, max_distance, search_distance
+        )
 
         # create an NAX insert cursor to load the origin locations with centroids to allow more flexible geometry input
         with odcm.insertCursor(
@@ -395,7 +430,7 @@ def get_origin_destination_parquet(
             ["Name", "SHAPE@XY"],
         ) as insert_origin:
             # iterate the origin h3 indices
-            for loop_idx, origin_idx in enumerate(batch_origin_lst):
+            for origin_idx in batch_origin_lst:
                 # create the geometry on the fly
                 geom = h3_arcpy.get_esri_point_for_h3_index(origin_idx)
 
@@ -405,31 +440,9 @@ def get_origin_destination_parquet(
                 # load the location
                 insert_origin.insertRow(origin_row)
 
-                # get the neighbor
-
-                # get indices within K distance of the batch origins
-                dest_set = set(
-                    itertools.chain(
-                        *(h3.grid_disk(idx, k_dist) for idx in batch_origin_lst)
-                    )
-                )
-
-                # find indices in destination indices within the search radius
-                dest_set.intersection_update(destination_h3_indices)
-
-                # add the set to the destination list
-                batch_dest_lst.append(dest_set)
-
-                logging.debug(
-                    f"Index {loop_idx + 1} of {len(batch_origin_lst)} ({origin_idx}) done."
-                )
-
         logging.debug(
             f"Loaded {len(batch_origin_lst):,} origin features into the origin-destination solver."
         )
-
-        # collapse the nested iterables into a non-repeating iterable
-        batch_dest_set = set(itertools.chain(*batch_dest_lst))
 
         # create an input cursor for the destinations, again using centroids
         with odcm.insertCursor(
@@ -437,7 +450,7 @@ def get_origin_destination_parquet(
             ["Name", "SHAPE@XY"],
         ) as insert_dest:
             # iterate the destination h3 indices
-            for dest_idx in batch_dest_set:
+            for dest_idx in batch_dest_lst:
                 # create the geometry on the fly
                 geom = h3_arcpy.get_esri_point_for_h3_index(dest_idx)
 
@@ -448,94 +461,85 @@ def get_origin_destination_parquet(
                 insert_dest.insertRow(dest_row)
 
             logging.debug(
-                f"Loaded {len(batch_dest_set):,} destination candidates into the origin-destination solver."
+                f"Loaded {len(batch_dest_lst):,} destination candidates into the origin-destination solver."
             )
 
         # solve the origin-destination matrix
-        logging.debug(f"Starting the origin-destination cost matrix solve.")
+        logging.debug(f"Starting the batch origin-destination cost matrix solve.")
         result = odcm.solve()
         logging.debug("Completed the origin-destination cost matrix solve.")
 
         # grab the results as an arrow table
-        logging.debug(
-            "Starting to export the origin-destination result to an Arrow table."
-        )
+        logging.debug("Starting to export the batch result.")
 
-        # columns to retrieve from the solve result
-        res_cols = ["OriginName", "DestinationName", "Total_Distance", "Total_Time"]
-
-        # list to populate with the solve result
-        res_lst = []
-
-        # iterate the solve result
-        for res_row in result.searchCursor(
-            arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines, res_cols
-        ):
-            # create a dictionary
-            res_dict = {
-                "origin_id": res_row[0],
-                "destination_id": res_row[1],
-                "distance_miles": res_row[2],
-                "time": res_row[3],
-            }
-
-            # add the dictionary to the list
-            res_lst.append(res_dict)
-
-        # create the schema to use for converting the list to a pyarrow table
-        pa_schema = pa.schema(
-            [
-                pa.field("origin_id", pa.string()),
-                pa.field("destination_id", pa.string()),
-                pa.field("distance_miles", pa.int64()),
-                pa.field("time", pa.int64()),
-            ]
-        )
-
-        # create a pyarrow table from the result list
-        solve_tbl = pa.Table.from_pylist(res_lst, schema=pa_schema)
-        logging.debug(
-            "Completed exporting the origin-destination result to an Arrow table."
-        )
-
-        # if  want the data organized by the origins
-        if partition_by_origin:
-            logging.debug(
-                f"Starting to save the origin-destination cost matrix parquet to {parquet_path} and partition by the"
-                f"origin H3 index."
+        # get a list of valid origins (not all are valid...because could not be solved for)
+        valid_origin_id_set = list(
+            set(
+                [
+                    r[0]
+                    for r in result.searchCursor(
+                        arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines,
+                        ["OriginName"],
+                    )
+                ]
             )
-            # https://arrow.apache.org/docs/python/generated/pyarrow.dataset.partitioning.html
-            # https://arrow.apache.org/docs/python/generated/pyarrow.parquet.ParquetDataset.html
+        )
+
+        # create export batches
+        output_batches = (
+            valid_origin_id_set[idx : idx + output_batch_size]
+            for idx in range(0, len(valid_origin_id_set), output_batch_size)
+        )
+
+        # iteratively dump out results based on the origin to avoid memory overruns
+        for out_idx, origin_idx_batch in enumerate(output_batches):
+            # convert the batch to a string with each value enclosed in quotes
+            origin_batch_str = ",".join((f"'{idx}'" for idx in origin_idx_batch))
+
+            # where clause to retrieve records from the solve result
+            origin_where_clause = f"""OriginName IN ({origin_batch_str})"""
+
+            # list to hydrate with records
+            tmp_lst = []
+
+            # iterate the solve result and hydrate the row list
+            for res_row in result.searchCursor(
+                arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines,
+                ["OriginName", "DestinationName", "Total_Distance", "Total_Time"],
+                origin_where_clause,
+            ):
+                # create a dictionary of the row data
+                row_dict = dict(
+                    zip(
+                        ["origin_id", "destination_id", "distance_miles", "time"],
+                        res_row,
+                    )
+                )
+
+                # add the row dictionary to the list
+                tmp_lst.append(row_dict)
+
+            # create a pyarrow table from the result list
+            solve_tbl = pa.Table.from_pylist(tmp_lst, schema=pa_schema)
+
+            # save to parquet
+            # REF: https://arrow.apache.org/docs/python/generated/pyarrow.parquet.write_to_dataset.html
             pq.write_to_dataset(
                 solve_tbl,
                 root_path=parquet_path,
                 partition_cols=["origin_id"],
                 compression="snappy",
-                existing_data_behavior="overwrite_or_ignore",
-            )
-            logging.debug(
-                f"Successfully saved the origin-destination cost matrix parquet to {parquet_path}"
+                existing_data_behavior="delete_matching",
             )
 
-        else:
-            # save the origin-destination table to a parquet dataset
-            # ref: https://arrow.apache.org/cookbook/py/io.html#reading-a-parquet-
-            logging.debug(
-                f"Starting to save the origin-destination cost matrix parquet to {parquet_path}"
-            )
-            pq.write_to_dataset(
-                solve_tbl,
-                root_path=parquet_path,
-                compression="snappy",
-                existing_data_behavior="overwrite_or_ignore",
-            )
-            logging.debug(
-                f"Successfully saved the origin-destination cost matrix parquet to {parquet_path}"
-            )
+            # remove ephemeral variables to save memory
+            del tmp_lst
+            del solve_tbl
+
+        logging.debug(f"Successfully saved batch parquet.")
 
     logging.info(
-        f"Successfully created origin-destination cost matrix and saved the result as parquet to "
-        f"{parquet_path}"
+        f"Successfully created origin-destination cost matrix and saved parquet result to {parquet_path}"
     )
 
     return parquet_path
@@ -821,6 +825,9 @@ def get_aoi_h3_origin_destination_distance_parquet(
     travel_mode: Optional[str] = "Walking Distance",
     max_distance: Optional[float] = 5.0,
     search_distance: Optional[float] = 1.0,
+    origin_batch_size: Optional[int] = 250,
+    output_batch_size: Optional[int] = 250,
+    append: Optional[bool] = True,
 ) -> Path:
     """
     Create an origin-destination matrix and save it to parquet.
@@ -832,17 +839,24 @@ def get_aoi_h3_origin_destination_distance_parquet(
         parquet_path: Path where the origin-destination table will be saved as Parquet.
         network_dataset: Optional path to network dataset to use.
         travel_mode: Travel mode to use with the network dataset. Default is ``Walking Distance``.
-        max_distance: Maximum distance (in miles) to search from the origin to the destinations. Default is `5.0`.
+        max_distance: Maximum distance (in miles) to search from the origin to the destinations. Default is ``5.0``.
         search_distance: Distance to search from the origin or destination locations to find a routable edge.
             Default is `1.0`.
+        origin_batch_size: Number of origins to look up per batch. Default is ``250``.
+        output_batch_size: Number of origin locations to output from a solve at a time. This frequently is the
+            bottleneck causing memory overruns, so if troubleshooting, try reducing this size first. The default is
+            ``250``.
+        append: Whether to append or replace existing results. The default is ``True``.
+
+    .. note::
+
+        If encountering memory errors during solves, try reducing the ``output_batch_size``. This reduces the number
+        of records saved to memory before being written to disk. If still encountering issues, also try reducing the
+        ``origin_batch_size``. This is the number of origins submitted to each solve operation.
 
     Returns:
         Path to where Parquet dataset is saved.
     """
-
-    # setting input batch size
-    origin_batch_size = 500
-
     # if the AOI is described with a feature class, standardize the path to a string
     if isinstance(area_of_interest, Path):
         area_of_interest = str(area_of_interest)
@@ -869,6 +883,8 @@ def get_aoi_h3_origin_destination_distance_parquet(
     if not isinstance(area_of_interest, Iterable):
         area_of_interest = [area_of_interest]
 
+    logging.debug('Getting H3 origin indices for the area of interest.')
+
     # iterate the geometries getting nested iterable (generator) of h3 indices
     h3_idx_gen = (
         list(h3_arcpy.get_h3_indices_for_esri_polygon(geom, resolution=h3_resolution))
@@ -878,29 +894,19 @@ def get_aoi_h3_origin_destination_distance_parquet(
     # iterate the generators into single iterable
     h3_origin_tpl = tuple(itertools.chain(*h3_idx_gen))
 
-    # create a set to store potential destination indices
-    h3_dest_set = set()
-
-    # get all the neighbors for the origin h3 indices
-    for h3_origin in h3_origin_tpl:
-        # get potential destinations for the origin
-        h3_dest_lst = h3.grid_disk(h3_origin)
-
-        # add potential destinations indices to the set (eliminates duplicates)
-        for h3_dest in h3_dest_lst:
-            h3_dest_set.add(h3_dest)
+    logging.info(f'{len(h3_origin_tpl):,} origins H3 indices retreived for the area of interest.')
 
     # solve the batch and save the incremental result
     pqt_pth = get_origin_destination_parquet(
         origin_h3_indices=h3_origin_tpl,
-        destination_h3_indices=tuple(h3_dest_set),
         parquet_path=parquet_path,
         network_dataset=network_dataset,
         travel_mode=travel_mode,
         max_distance=max_distance,
         search_distance=search_distance,
         origin_batch_size=origin_batch_size,
-        partition_by_origin=True,
+        output_batch_size=output_batch_size,
+        append=append,
     )
 
     return pqt_pth

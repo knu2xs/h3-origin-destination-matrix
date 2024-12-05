@@ -20,15 +20,16 @@ LICENSE file.
 """
 import datetime
 from configparser import ConfigParser
+import logging
 from pathlib import Path
-import pkgutil
+import importlib.util
 import sys
 
 # path to the root of the project
 dir_prj = Path(__file__).parent.parent
 
 # if the project package is not installed in the environment
-if pkgutil.find_loader("h3_od") is None:
+if importlib.util.find_spec("h3_od") is None:
     # get the relative path to where the source directory is located
     src_dir = dir_prj / "src"
 
@@ -44,12 +45,16 @@ import h3_od
 
 # read and configure
 config = ConfigParser()
-config.read("config.ini")
+config.read(Path(__file__).parent / "config.ini")
 
 log_level = config.get("DEFAULT", "LOG_LEVEL")
 aoi_features = dir_prj / config.get("DEFAULT", "AOI_POLYGON")
 od_parquet = dir_prj / config.get("DEFAULT", "OUTPUT_OD_PARQUET")
+snap_distance = float(config.get('DEFAULT', 'SNAP_DISTANCE'))
 network_dataset = Path(config.get("DEFAULT", "NETWORK_DATASET"))
+travel_mode = config.get('DEFAULT', 'TRAVEL_MODE')
+h3_resolution = int(config.get("DEFAULT", "H3_RESOLUTION"))
+origin_batch_size = int(config.get("DEFAULT", "ORIGIN_BATCH_SIZE"))
 
 # path for saving logging
 dt_str = datetime.datetime.now().strftime("%Y%m%d%H%M")
@@ -58,13 +63,19 @@ log_pth = od_parquet.parent / f"od_solve_{dt_str}.log"
 # configure logging
 h3_od.utils.logging_utils.configure_logging(log_level, logfile_path=log_pth)
 
+logging.info(
+    f"Solving origin-destination matrix using {network_dataset} using H3 resolution {h3_resolution}, and "
+    f"saving to {od_parquet}."
+)
+
 # create the origin-destination matrix
 h3_od.proximity.get_aoi_h3_origin_destination_distance_parquet(
     area_of_interest=aoi_features,
     parquet_path=od_parquet,
-    h3_resolution=10,
+    h3_resolution=h3_resolution,
     network_dataset=network_dataset,
-    travel_mode="Walking Distance",
-    max_distance=5.0,
-    search_distance=1.0,
+    travel_mode=travel_mode,
+    max_distance=180.0,
+    search_distance=snap_distance,
+    origin_batch_size=origin_batch_size,
 )

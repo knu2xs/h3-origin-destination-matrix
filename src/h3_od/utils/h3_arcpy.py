@@ -3,17 +3,15 @@ __author__ = "Joel McCune"
 __license__ = "Apache 2.0"
 __copyright__ = "Copyright 2023 by Joel McCune"
 
-__all__ = ["get_h3_indices_for_esri_polygon"]
+__all__ = ["get_h3_indices_for_esri_polygon", "get_k_neighbors"]
 
-import os
-from pathlib import Path
-from typing import List, Union, Tuple, Set, Iterable, Optional, Generator, Set
+from typing import List, Union, Tuple, Set, Iterable
 
 import arcpy
-import dask.bag as db
-import dask.dataframe as dd
 import h3
 import h3.api.basic_int as h3_int
+import dask.dataframe as dd
+import numpy as np
 
 
 def handle_features(fn):
@@ -249,3 +247,39 @@ def get_esri_point_for_h3_index(h3_index: Union[str, int]) -> arcpy.PointGeometr
     )
 
     return geom
+
+
+def get_single_origin_k_neighbors(
+    origin_index: Union[str, int], k_dist: int
+) -> list[Union[int, str]]:
+    """Get K-distance neighbors for a single H3 index."""
+    if isinstance(origin_index, str):
+        k_neighbors = h3.grid_disk(origin_index, k_dist)
+    else:
+        k_neighbors = h3_int.grid_disk(origin_index, k_dist)
+
+    return k_neighbors
+
+
+def get_k_neighbors(
+    origin_indices: list[str, int], k_dist: int
+) -> list[Union[int, str]]:
+    """Get non-repeating K-distance neighbors for multiple origin H3 indices."""
+    # create a dask dataframe to parallelize processing
+    df = dd.from_array(np.array(origin_indices), columns=["origin_idx"])
+
+    # TODO: lookup number of threads available and distribute across cores
+
+    # use dask to distribut the k_neighbors lookup across multiple threads and speed up this bottleneck
+    dest_idx_lst = (
+        df["origin_idx"]
+        .apply(
+            lambda idx: get_single_origin_k_neighbors(idx, 5), meta=("origin_idx", str)
+        )
+        .explode()  # get every value in single row
+        .drop_duplicates()  # remove duplicate values
+        .compute()  # invoke parallel processing using Dask
+        .values.tolist()  # convert from Dask series to a list
+    )
+
+    return dest_idx_lst

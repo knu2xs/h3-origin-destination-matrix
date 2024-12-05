@@ -38,7 +38,7 @@ GOTO %1
 
 :: Perform data preprocessing steps contained in the make_data.py script.
 :data
-    CALL conda run -p %CONDA_DIR% python src/make_data.py
+    CALL conda run -p %CONDA_DIR% python scripts/make_data.py
     GOTO end
 
 :: Make documentation using Sphinx!
