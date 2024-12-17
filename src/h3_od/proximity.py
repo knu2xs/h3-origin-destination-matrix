@@ -5,8 +5,8 @@
 Proximity streamlines the process of calculating distance metrics using Esri Network Analyst.
 """
 __all__ = [
-    "get_distance_between_h3_indices",
-    "get_distance_between_coordinates_using_h3",
+    "get_h3_origin_destination_distance",
+    "get_h3_origin_destination_distance_using_coordinates",
     "get_origin_destination_distance_parquet_from_arcgis_features",
     "get_h3_neighbors",
     "get_nearest_origin_destination_neighbor",
@@ -36,7 +36,7 @@ import pyarrow.dataset as ds
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from h3_od.utils import h3_arcpy
+from h3_od.utils import h3_arcpy, get_arcgis_polygon_for_h3_index
 
 # basic setup to ensure network solves work
 arcpy.env.overwriteOutput = True
@@ -393,8 +393,8 @@ def get_origin_destination_parquet(
         [
             pa.field("origin_id", pa.string()),
             pa.field("destination_id", pa.string()),
-            pa.field("distance_miles", pa.int64()),
-            pa.field("time", pa.int64()),
+            pa.field("distance_miles", pa.float64()),
+            pa.field("time", pa.float64()),
         ]
     )
 
@@ -432,7 +432,7 @@ def get_origin_destination_parquet(
             # iterate the origin h3 indices
             for origin_idx in batch_origin_lst:
                 # create the geometry on the fly
-                geom = h3_arcpy.get_esri_point_for_h3_index(origin_idx)
+                geom = h3_arcpy.get_arcpy_point_for_h3_index(origin_idx)
 
                 # build the row using the h3 index
                 origin_row = [origin_idx, geom]
@@ -452,7 +452,7 @@ def get_origin_destination_parquet(
             # iterate the destination h3 indices
             for dest_idx in batch_dest_lst:
                 # create the geometry on the fly
-                geom = h3_arcpy.get_esri_point_for_h3_index(dest_idx)
+                geom = h3_arcpy.get_arcpy_point_for_h3_index(dest_idx)
 
                 # create the row using the h3 index
                 dest_row = [dest_idx, geom]
@@ -485,39 +485,71 @@ def get_origin_destination_parquet(
             )
         )
 
-        # create export batches
-        output_batches = (
-            valid_origin_id_set[idx : idx + output_batch_size]
-            for idx in range(0, len(valid_origin_id_set), output_batch_size)
-        )
+        # if valid routes found
+        if len(valid_origin_id_set):
+            # create export batches
+            output_batches = (
+                valid_origin_id_set[idx : idx + output_batch_size]
+                for idx in range(0, len(valid_origin_id_set), output_batch_size)
+            )
 
-        # iteratively dump out results based on the origin to avoid memory overruns
-        for out_idx, origin_idx_batch in enumerate(output_batches):
-            # convert the batch to a string with each value enclosed in quotes
-            origin_batch_str = ",".join((f"'{idx}'" for idx in origin_idx_batch))
+            # iteratively dump out results based on the origin to avoid memory overruns
+            for out_idx, origin_idx_batch in enumerate(output_batches):
+                # convert the batch to a string with each value enclosed in quotes
+                origin_batch_str = ",".join((f"'{idx}'" for idx in origin_idx_batch))
 
-            # where clause to retrieve records from the solve result
-            origin_where_clause = f"""OriginName IN ({origin_batch_str})"""
+                # where clause to retrieve records from the solve result
+                origin_where_clause = f"""OriginName IN ({origin_batch_str})"""
 
-            # list to hydrate with records
-            tmp_lst = []
+                # list to hydrate with records
+                tmp_lst = []
 
-            # iterate the solve result and hydrate the row list
-            for res_row in result.searchCursor(
-                arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines,
-                ["OriginName", "DestinationName", "Total_Distance", "Total_Time"],
-                origin_where_clause,
-            ):
-                # create a dictionary of the row data
-                row_dict = dict(
-                    zip(
-                        ["origin_id", "destination_id", "distance_miles", "time"],
-                        res_row,
+                # iterate the solve result and hydrate the row list
+                for res_row in result.searchCursor(
+                    arcpy.nax.OriginDestinationCostMatrixOutputDataType.Lines,
+                    ["OriginName", "DestinationName", "Total_Distance", "Total_Time"],
+                    origin_where_clause,
+                ):
+                    # create a dictionary of the row data
+                    row_dict = dict(
+                        zip(
+                            ["origin_id", "destination_id", "distance_miles", "time"],
+                            res_row,
+                        )
                     )
+
+                    # add the row dictionary to the list
+                    tmp_lst.append(row_dict)
+
+                # create a pyarrow table from the result list
+                solve_tbl = pa.Table.from_pylist(tmp_lst, schema=pa_schema)
+
+                # save to parquet
+                # REF: https://arrow.apache.org/docs/python/generated/pyarrow.parquet.write_to_dataset.html
+                pq.write_to_dataset(
+                    solve_tbl,
+                    root_path=parquet_path,
+                    partition_cols=["origin_id"],
+                    compression="snappy",
+                    existing_data_behavior="delete_matching",
                 )
 
-                # add the row dictionary to the list
-                tmp_lst.append(row_dict)
+                # remove ephemeral variables to save memory
+                del tmp_lst
+                del solve_tbl
+
+            logging.debug(f"Successfully saved batch parquet.")
+
+        else:
+            # save empty values as placeholder, so have record of unroutable origins
+            tmp_lst = [
+                {
+                    "origin_id": origin_idx,
+                    "destination_id": None,
+                    "distance_miles": None,
+                    "time": None,
+                }
+            ]
 
             # create a pyarrow table from the result list
             solve_tbl = pa.Table.from_pylist(tmp_lst, schema=pa_schema)
@@ -532,11 +564,9 @@ def get_origin_destination_parquet(
                 existing_data_behavior="delete_matching",
             )
 
-            # remove ephemeral variables to save memory
-            del tmp_lst
-            del solve_tbl
-
-        logging.debug(f"Successfully saved batch parquet.")
+            logging.debug(
+                f"No valid origin-destination candidates found for {origin_idx}."
+            )
 
     logging.info(
         f"Successfully created origin-destination cost matrix and saved parquet result to {parquet_path}"
@@ -592,62 +622,78 @@ def get_origin_destination_distance_parquet_from_arcgis_features(
     return parquet_path
 
 
-def get_distance_between_h3_indices(
-    origin_destination_dataset: Union[ds.Dataset, str, Path],
+def get_h3_origin_destination_distance(
+    origin_destination_dataset: Union[str, Path],
     h3_origin: str,
-    h3_destination: str,
-    warn_on_fail: bool = True,
-) -> float:
+    h3_destination: Optional[str] = None,
+    add_geometry: Optional[bool] = False,
+    warn_on_fail: Optional[bool] = True,
+) -> pd.DataFrame:
     """
     Given an origin and destination H3 index, get the distance between the indices.
 
     Args:
         origin_destination_dataset: Origin-destination PyArrow dataset or path to Parquet dataset.
         h3_origin: Origin H3 index.
-        h3_destination: Destination H3 index.
+        h3_destination: Destination H3 index. Optional. If not provided, all potential H3 destinations will be returned.
+        add_geometry: Whether to add a destination indices' geometry. This will return a Spatially Enabled Dataframe.
         warn_on_fail: Whether to warn if no results found.
 
     Returns:
-        Distance between H3 indices.
+        Distance and travel time between H3 indices.
     """
     # handle various ways origin-destination dataset can be provided, and ensure is PyArrow Dataset
     if not isinstance(origin_destination_dataset, ds.Dataset):
         origin_destination_dataset = ds.dataset(
-            origin_destination_dataset, format="parquet"
+            origin_destination_dataset,
+            format="parquet",
+            partitioning="hive",
         )
 
-    # create the filter to find the record
-    fltr = (pc.field("origin_id") == h3_origin) & (
-        pc.field("destination_id") == h3_destination
-    )
+    # start building the filter to find destinations
+    fltr = pc.field("origin_id") == h3_origin
+
+    # only add the destination filter if provided
+    if h3_destination is not None:
+        dest_fltr = pc.field("destination_id") == h3_destination
+        fltr = fltr & dest_fltr
 
     # read in the table with the filter and convert to a list of dictionaries
-    fltr_lst = origin_destination_dataset.to_table(filter=fltr).to_pylist()
+    od_tbl = origin_destination_dataset.filter(fltr).to_table()
 
     # handle contingency of not finding a match, but if found, provide the distance
-    if len(fltr_lst) == 0:
-        if warn_on_fail:
-            warn(
-                f"Cannot route between {h3_origin} and {h3_destination}. This may be due to the origin, destination "
-                f"or both being un-routable, simply too far apart, or possibly not using the correct resolution "
-                f"indices."
-            )
+    if od_tbl.num_rows == 0 and warn_on_fail:
+        warn(
+            f"Cannot route between {h3_origin} and {h3_destination}. This may be due to the origin, destination "
+            f"or both being un-routable, simply too far apart, or possibly not using the correct resolution "
+            f"indices."
+        )
 
-        dist = None
+    # convert the table to a data frame and return at least the correct object even if there aren't any rows
+    od_df = od_tbl.to_pandas()
 
-    else:
-        dist = fltr_lst[0]["distance_miles"]
+    # enforce consistent schema
+    od_df = od_df[["origin_id", "destination_id", "distance_miles", "time"]]
 
-    return dist
+    # if desired to return spatially enabled dataframe
+    if add_geometry:
+        od_df["geometry"] = od_df["destination_id"].apply(
+            get_arcgis_polygon_for_h3_index
+        )
+
+        # set the geometry so valid SeDF
+        od_df.spatial.set_geometry("geometry", inplace=True)
+
+    return od_df
 
 
-def get_distance_between_coordinates_using_h3(
+def get_h3_origin_destination_distance_using_coordinates(
     origin_destination_dataset: Union[ds.Dataset, str, Path],
     origin_coordinates: Union[Tuple[float], List[float]],
     destination_coordinates: Union[Tuple[float], List[float]],
     h3_resolution: int = 10,
     warn_on_fail: bool = True,
-) -> float:
+) -> pd.DataFrame:
     """
     Given origin and destination coordinates, get the distance between using an H3 lookup.
 
@@ -670,7 +716,7 @@ def get_distance_between_coordinates_using_h3(
     )
 
     # get the distance between the locations
-    dist = get_distance_between_h3_indices(
+    dist = get_h3_origin_destination_distance(
         origin_destination_dataset, h3_origin, h3_dest, warn_on_fail
     )
 
@@ -747,7 +793,9 @@ def get_origin_destination_neighbors(
     # handle various ways origin-destination dataset can be provided, and ensure is PyArrow Dataset
     if not isinstance(origin_destination_dataset, ds.Dataset):
         origin_destination_dataset = ds.dataset(
-            origin_destination_dataset, format="parquet"
+            origin_destination_dataset,
+            format="parquet",
+            partitioning="hive",
         )
 
     # create the filter for retrieving data
@@ -756,7 +804,7 @@ def get_origin_destination_neighbors(
     )
 
     # read in the table with the filter
-    od_tbl = origin_destination_dataset.to_table(filter=fltr)
+    od_tbl = origin_destination_dataset.filter(fltr).to_table()
 
     # handle if no matches found
     if od_tbl.num_rows == 0:
@@ -767,10 +815,11 @@ def get_origin_destination_neighbors(
                 f"unroutable."
             )
 
-        od_df = None
+    # convert to pandas data frame
+    od_df = od_tbl.to_pandas()
 
-    else:
-        od_df = od_tbl.to_pandas()
+    # enforce consistent schema
+    od_df = od_df[["origin_id", "destination_id", "distance_miles", "time"]]
 
     return od_df
 
@@ -795,7 +844,10 @@ def get_nearest_origin_destination_neighbor(
     """
     # read in the table with the filter
     od_df = get_origin_destination_neighbors(
-        origin_destination_dataset, origin_id, distance, warn_on_fail
+        origin_destination_dataset,
+        origin_id=origin_id,
+        distance=distance,
+        warn_on_fail=warn_on_fail,
     )
 
     # based on the minimum distance, not locations potentially were returned
@@ -804,6 +856,9 @@ def get_nearest_origin_destination_neighbor(
         dest_id = None
 
     else:
+        # remove the origin to self distance...which is zero
+        od_df = od_df.loc[od_df["origin_id"] != od_df["destination_id"]]
+
         # get the minimum distance
         min_dist = od_df["distance_miles"].min()
 
@@ -883,7 +938,7 @@ def get_aoi_h3_origin_destination_distance_parquet(
     if not isinstance(area_of_interest, Iterable):
         area_of_interest = [area_of_interest]
 
-    logging.debug('Getting H3 origin indices for the area of interest.')
+    logging.debug("Getting H3 origin indices for the area of interest.")
 
     # iterate the geometries getting nested iterable (generator) of h3 indices
     h3_idx_gen = (
@@ -894,7 +949,9 @@ def get_aoi_h3_origin_destination_distance_parquet(
     # iterate the generators into single iterable
     h3_origin_tpl = tuple(itertools.chain(*h3_idx_gen))
 
-    logging.info(f'{len(h3_origin_tpl):,} origins H3 indices retreived for the area of interest.')
+    logging.info(
+        f"{len(h3_origin_tpl):,} origins H3 indices retrieved for the area of interest."
+    )
 
     # solve the batch and save the incremental result
     pqt_pth = get_origin_destination_parquet(

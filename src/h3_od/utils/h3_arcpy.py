@@ -189,7 +189,7 @@ def get_h3_indices_for_esri_polygon(geom: arcpy.Polygon, resolution: int) -> Set
     return h3_idx_set
 
 
-def get_esri_polygon_for_h3_index(h3_index: Union[str, int]) -> arcpy.Polygon:
+def get_arcpy_polygon_for_h3_index(h3_index: Union[str, int]) -> arcpy.Polygon:
     """
     For a single H3 index, get the ArcPy polygon geometry for the index.
 
@@ -219,7 +219,7 @@ def get_esri_polygon_for_h3_index(h3_index: Union[str, int]) -> arcpy.Polygon:
     return geom
 
 
-def get_esri_point_for_h3_index(h3_index: Union[str, int]) -> arcpy.PointGeometry:
+def get_arcpy_point_for_h3_index(h3_index: Union[str, int]) -> arcpy.PointGeometry:
     """
     For a single H3 index, get the ArcPy point geometry for the index.
 
