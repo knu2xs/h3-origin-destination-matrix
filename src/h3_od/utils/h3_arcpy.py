@@ -83,7 +83,7 @@ def transpose_coordinate_list(coord_list: List[Tuple[float]]) -> List[Tuple[floa
     return transposed_lst
 
 
-def get_h3_polygon_from_geojson(geojson: dict) -> h3.LatLngPoly:
+def get_h3_polygon_from_geojson(geojson: dict) -> "h3.LatLngPoly":
     """
     Get an ``h3.Polygon`` object instance from GeoJSON.
 
@@ -114,16 +114,16 @@ def get_h3_polygon_from_geojson(geojson: dict) -> h3.LatLngPoly:
         ]
 
         # create an H3 Polygon object with the holes
-        h3_poly = h3.LatLngPoly(poly_coords, hole_lst)
+        h3_poly = h3.latlng_to_cell(poly_coords, hole_lst)
 
     else:
         # create an H3 Polygon object without the holes
-        h3_poly = h3.LatLngPoly(poly_coords)
+        h3_poly = h3.latlng_to_cell(poly_coords)
 
     return h3_poly
 
 
-def get_h3_polygon_from_esri_polygon(polygon: arcpy.Polygon) -> h3.LatLngPoly:
+def get_h3_polygon_from_esri_polygon(polygon: arcpy.Polygon) -> "h3.LatLngPoly":
     """
     Get an ``h3.Polygon`` object instance from an ``arcpy.Polygon``.
 

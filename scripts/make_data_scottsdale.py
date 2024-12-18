@@ -30,7 +30,7 @@ config = ConfigParser()
 config.read(Path(__file__).parent / "config.ini")
 
 # config group to retrieve
-config_group = "SCOTTSDALE_DRIVE"
+config_group = "SCOTTSDALE_WALK"
 
 log_level = config.get(config_group, "LOG_LEVEL")
 aoi_features = Path(config.get(config_group, "AOI_POLYGON"))
