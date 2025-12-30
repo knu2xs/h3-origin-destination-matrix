@@ -10,16 +10,17 @@ authors = [
 ]
 description = "Create an origin-destination matrix using H3 indices."
 readme = "README.md"
-requires-python = ">=3.9, <=3.12"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
 ]
 license = {file = "LICENSE"}
 dependencies = [
-    "arcgis>=2.4.0",
-    "dask[dataframe]>=1.1.1",
-    "h3==4.1.*",
+    "arcgis",
+    "dask[dataframe]",
+    "h3==4.*",
+    "pyarrow",
 ]
 
 [tool.setuptools.packages.find]

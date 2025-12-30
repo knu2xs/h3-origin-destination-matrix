@@ -19,16 +19,13 @@ import logging
 import math
 import os
 import uuid
-from multiprocessing import cpu_count
 from pathlib import Path
 from typing import List, Union, Tuple, Optional, Iterable
 from warnings import warn
 
 import arcgis.geometry
-import numpy as np
 from arcgis.geoenrichment._business_analyst import Country
 import arcpy
-import dask.dataframe as dd
 import h3
 import pandas as pd
 import pyarrow as pa
@@ -36,7 +33,8 @@ import pyarrow.dataset as ds
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from h3_od.utils import h3_arcpy, get_arcgis_polygon_for_h3_index
+from .utils import h3_arcpy, get_arcgis_polygon_for_h3_index
+from .utils._logging import get_logger
 
 # basic setup to ensure network solves work
 arcpy.env.overwriteOutput = True
@@ -44,6 +42,9 @@ arcpy.CheckOutExtension("network")
 
 # variables for network solves - some may have to be updated for doing international analysis
 iso2 = "US"
+
+# configure logging
+logger = get_logger("h3_od.proximity", level="DEBUG", add_stream_handler=False)
 
 
 def validate_h3_index_list(
@@ -204,10 +205,12 @@ def get_network_dataset_layer(
 ) -> arcpy._mp.Layer:
     """
     Get a network dataset layer, optionally using default.
+
     Args:
         network_dataset: Optional path to network dataset being used.
 
-    .. note::
+    !! note
+
         If not specified, uses network solver set in Environment settings.
 
     Returns:
@@ -239,11 +242,12 @@ def get_network_travel_modes(
     """
     Get the travel modes, which can be used when solving for a network.
 
+    !! note
+
+        If not specified, uses network solver set in Environment settings.
+
     Args:
         network_dataset: Optional path to network dataset being used.
-
-    .. note::
-        If not specified, uses network solver set in Environment settings.
 
     Returns:
 
@@ -281,43 +285,43 @@ def get_origin_destination_cost_matrix_solver(
     """
     # create a network dataset layer
     nds_lyr = arcpy.nax.MakeNetworkDatasetLayer(str(network_dataset))[0]
-    logging.debug("Created network dataset layer.")
+    logger.debug("Created network dataset layer.")
 
     # instantiate origin-destination cost matrix solver object
     odcm = arcpy.nax.OriginDestinationCostMatrix(nds_lyr)
-    logging.debug("Created origin-destination cost matrix object.")
+    logger.debug("Created origin-destination cost matrix object.")
 
     # set the desired travel mode for analysis
     nd_travel_modes = arcpy.nax.GetTravelModes(nds_lyr)
     odcm.travelMode = nd_travel_modes[travel_mode]
-    logging.info(f'Origin-destination cost matrix travel mode is "{travel_mode}"')
+    logger.info(f'Origin-destination cost matrix travel mode is "{travel_mode}"')
 
     # use miles for the distance units
     odcm.distanceUnits = arcpy.nax.DistanceUnits.Miles
-    logging.debug("Origin-destination cost matrix distance units set to miles.")
+    logger.debug("Origin-destination cost matrix distance units set to miles.")
 
     # maximum distance to solve for based on the distance units above
     odcm.defaultImpedanceCutoff = max_distance
-    logging.info(
+    logger.info(
         f"Origin-destination cost matrix maximum solve distance (defaultImpedanceCutoff) set to "
         f"{max_distance} miles."
     )
 
     # use miles for the search distance - how far to "snap" points to nearest routable network edge
     odcm.searchToleranceUnits = arcpy.nax.DistanceUnits.Miles
-    logging.debug(
+    logger.debug(
         "Origin-destination cost matrix search tolerance (snap distance) units set to miles."
     )
 
     # set the search distance
     odcm.searchTolerance = search_distance
-    logging.info(
+    logger.info(
         f"Origin-destination cost matrix search tolerance (snap distance) set to {search_distance} miles."
     )
 
     # don't need geometry, just the origin, destination and output
     odcm.lineShapeType = arcpy.nax.LineShapeType.NoLine
-    logging.debug("Origin-destination cost matrix set to not return line geometry.")
+    logger.debug("Origin-destination cost matrix set to not return line geometry.")
 
     return odcm
 
@@ -360,12 +364,15 @@ def get_origin_destination_parquet(
     if not parquet_path.exists():
         parquet_path.mkdir(parents=True)
 
+    # get the resolution of the input H3 indices
+    h3_resolution = h3_arcpy.get_h3_resolution(origin_h3_indices[0])
+
     # if appending, get the list of preexisting origin ids to not have to solve for
     if append:
         existing_origin_id_lst = [
             pth.name.split("=")[-1] for pth in parquet_path.glob("**/origin_id=*")
         ]
-        logging.debug(
+        logger.debug(
             f"{len(existing_origin_id_lst):,} origins already solved for in output parquet data."
         )
 
@@ -374,7 +381,7 @@ def get_origin_destination_parquet(
             origin_h3_indices = [
                 idx for idx in origin_h3_indices if idx not in existing_origin_id_lst
             ]
-            logging.debug(
+            logger.debug(
                 f"Only have to solve for {len(origin_h3_indices):,} origins instead of {original_len:,}."
             )
 
@@ -384,13 +391,14 @@ def get_origin_destination_parquet(
     # batch the solve based on the input feature count
     origin_batch_cnt = math.ceil(origin_cnt / origin_batch_size)
 
-    logging.info(
+    logger.info(
         f"The origin-destination matrix solution will require {origin_batch_cnt:,} iterations."
     )
 
     # create the schema to use for converting the list to a pyarrow table, required for saving to parquet
     pa_schema = pa.schema(
         [
+            pa.field("h3_resolution", pa.string() if isinstance(h3_resolution, str) else pa.int64()),
             pa.field("origin_id", pa.string()),
             pa.field("destination_id", pa.string()),
             pa.field("distance_miles", pa.float64()),
@@ -400,7 +408,7 @@ def get_origin_destination_parquet(
 
     # iterate the number of times it takes to process all the input features
     for batch_idx in range(origin_batch_cnt):
-        logging.info(
+        logger.info(
             f"Starting the origin-destination cost matrix batch {(batch_idx + 1):,} of {origin_batch_cnt:,}."
         )
 
@@ -440,7 +448,7 @@ def get_origin_destination_parquet(
                 # load the location
                 insert_origin.insertRow(origin_row)
 
-        logging.debug(
+        logger.debug(
             f"Loaded {len(batch_origin_lst):,} origin features into the origin-destination solver."
         )
 
@@ -460,17 +468,17 @@ def get_origin_destination_parquet(
                 # load the location
                 insert_dest.insertRow(dest_row)
 
-            logging.debug(
+            logger.debug(
                 f"Loaded {len(batch_dest_lst):,} destination candidates into the origin-destination solver."
             )
 
         # solve the origin-destination matrix
-        logging.debug(f"Starting the batch origin-destination cost matrix solve.")
+        logger.debug(f"Starting the batch origin-destination cost matrix solve.")
         result = odcm.solve()
-        logging.debug("Completed the origin-destination cost matrix solve.")
+        logger.debug("Completed the origin-destination cost matrix solve.")
 
         # grab the results as an arrow table
-        logging.debug("Starting to export the batch result.")
+        logger.debug("Starting to export the batch result.")
 
         # get a list of valid origins (not all are valid...because could not be solved for)
         valid_origin_id_set = list(
@@ -510,11 +518,15 @@ def get_origin_destination_parquet(
                     ["OriginName", "DestinationName", "Total_Distance", "Total_Time"],
                     origin_where_clause,
                 ):
+
+                    # prepend the h3 resolution to the row
+                    row = [h3_resolution] + list(res_row)
+
                     # create a dictionary of the row data
                     row_dict = dict(
                         zip(
-                            ["origin_id", "destination_id", "distance_miles", "time"],
-                            res_row,
+                            ["h3_resolution", "origin_id", "destination_id", "distance_miles", "time"],
+                            row,
                         )
                     )
 
@@ -529,7 +541,7 @@ def get_origin_destination_parquet(
                 pq.write_to_dataset(
                     solve_tbl,
                     root_path=parquet_path,
-                    partition_cols=["origin_id"],
+                    partition_cols=["h3_resolution", "origin_id"],
                     compression="snappy",
                     existing_data_behavior="delete_matching",
                 )
@@ -538,12 +550,13 @@ def get_origin_destination_parquet(
                 del tmp_lst
                 del solve_tbl
 
-            logging.debug(f"Successfully saved batch parquet.")
+            logger.debug(f"Successfully saved batch parquet index: {batch_idx}.")
 
         else:
             # save empty values as placeholder, so have record of unroutable origins
             tmp_lst = [
                 {
+                    "h3_resolution": h3_resolution,
                     "origin_id": origin_idx,
                     "destination_id": None,
                     "distance_miles": None,
@@ -564,11 +577,11 @@ def get_origin_destination_parquet(
                 existing_data_behavior="delete_matching",
             )
 
-            logging.debug(
+            logger.debug(
                 f"No valid origin-destination candidates found for {origin_idx}."
             )
 
-    logging.info(
+    logger.info(
         f"Successfully created origin-destination cost matrix and saved parquet result to {parquet_path}"
     )
 
@@ -642,6 +655,20 @@ def get_h3_origin_destination_distance(
     Returns:
         Distance and travel time between H3 indices.
     """
+    # get the resolution for the origin index
+    origin_res = h3.get_resolution(h3_origin)
+
+    # ensure the resolution matches for the origin and destination indices if the destination is provided
+    if h3_destination is not None:
+        dest_res = h3.get_resolution(h3_destination)
+        if origin_res != dest_res:
+            raise ValueError(
+                f"Origin H3 resolution {origin_res} does not match destination H3 resolution {dest_res}."
+            )
+
+    # report the H3 resolution being used
+    logger.debug(f"Using H3 resolution {origin_res} for origin-destination lookup.")
+
     # handle various ways origin-destination dataset can be provided, and ensure is PyArrow Dataset
     if not isinstance(origin_destination_dataset, ds.Dataset):
         origin_destination_dataset = ds.dataset(
@@ -658,7 +685,7 @@ def get_h3_origin_destination_distance(
         dest_fltr = pc.field("destination_id") == h3_destination
         fltr = fltr & dest_fltr
 
-    # read in the table with the filter and convert to a list of dictionaries
+    # read in the table with the filter
     od_tbl = origin_destination_dataset.filter(fltr).to_table()
 
     # handle contingency of not finding a match, but if found, provide the distance
@@ -938,7 +965,7 @@ def get_aoi_h3_origin_destination_distance_parquet(
     if not isinstance(area_of_interest, Iterable):
         area_of_interest = [area_of_interest]
 
-    logging.debug("Getting H3 origin indices for the area of interest.")
+    logger.debug("Getting H3 origin indices for the area of interest.")
 
     # iterate the geometries getting nested iterable (generator) of h3 indices
     h3_idx_gen = (
@@ -949,7 +976,7 @@ def get_aoi_h3_origin_destination_distance_parquet(
     # iterate the generators into single iterable
     h3_origin_tpl = tuple(itertools.chain(*h3_idx_gen))
 
-    logging.info(
+    logger.info(
         f"{len(h3_origin_tpl):,} origins H3 indices retrieved for the area of interest."
     )
 

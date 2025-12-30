@@ -13,7 +13,6 @@ dependencies:
   - pandoc
   - pip
   - pytest
-  - pyarrow
   - pyyaml
   - pip:
     - autodocsumm
@@ -23,7 +22,7 @@ dependencies:
     - furo
     - nbsphinx
     - placekey
-    - h3==4.1.*
+    - h3==4.*
     - sphinx
     - sphinxcontrib-youtube
     - sphinx-autodoc-typehints

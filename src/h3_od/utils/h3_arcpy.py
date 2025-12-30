@@ -5,7 +5,7 @@ __copyright__ = "Copyright 2023 by Joel McCune"
 
 __all__ = ["get_h3_indices_for_esri_polygon", "get_k_neighbors"]
 
-from typing import List, Union, Tuple, Set, Iterable
+from typing import Union, Optional, Literal
 
 import arcpy
 import h3
@@ -13,6 +13,21 @@ import h3.api.basic_int as h3_int
 import dask.dataframe as dd
 import numpy as np
 
+from ._logging import get_logger
+
+# configure logging
+logger = get_logger("h3_od.utils.h3_arcpy", level="DEBUG", add_stream_handler=False)
+
+
+def get_h3_resolution(h3_index: Union[str, int]) -> int:
+    """Get the H3 resolution for a given H3 index."""
+    # get the resolution using the correct method based on the input index format
+    if isinstance(h3_index, int):
+        res = h3_int.get_resolution(h3_index)
+    else:
+        res = h3.get_resolution(h3_index)
+
+    return res
 
 def handle_features(fn):
     """Decorator to take care of input_features validation and handling possibility of including a UID in a tuple."""
@@ -30,18 +45,20 @@ def handle_features(fn):
             uid, geom = input_feature
 
             if not isinstance(uid, (str, int)):
-                raise ValueError(
-                    f"First input_feature for UID must be either a string or integer."
-                )
+                msg = f"First input_feature for UID must be either a string or integer."
+                logger.error(msg)
+                raise ValueError(msg)
 
             elif not isinstance(geom, arcpy.Polygon):
-                raise ValueError(
-                    f"Second input_feature for Geometry must be an arcpy.Polygon."
-                )
+                msg = f"Second input_feature for Geometry must be an arcpy.Polygon."
+                logger.error(msg)
+                raise ValueError(msg)
 
         # if not a tuple, validate the polygon
         elif not isinstance(input_feature, arcpy.Polygon):
-            raise ValueError(f"The input_feature MUST be an arcpy.Polygon")
+            msg = f"The input_feature for Geometry must be an arcpy.Polygon."
+            logger.error(msg)
+            raise ValueError(msg)
 
         # if a single feature with a polygon, save to geometry
         else:
@@ -61,11 +78,14 @@ def handle_features(fn):
     return hndl_feat
 
 
-def transpose_coordinate_list(coord_list: List[Tuple[float]]) -> List[Tuple[float]]:
+def transpose_coordinate_list(
+    coord_list: list[tuple[float]],
+) -> list[tuple[float, float]]:
     """
-    Since the ``h3`` library expects coordinate pairs as ``y, x``, use this function to transpose coordinate lists.
+    Since the `h3` library expects coordinate pairs as `y, x`, use this function to transpose coordinate lists.
 
-    .. note::
+    !! note
+
         This is useful for converting lists of ``x, y`` coordinates to ``y, x`` for input into H3 functions, but
         also is useful for converting outputs from H3 functions from ``y, x`` to ``x,  y`` for use with ArcPy and
         ArcGIS as well.
@@ -77,17 +97,20 @@ def transpose_coordinate_list(coord_list: List[Tuple[float]]) -> List[Tuple[floa
         List of coordinates transposed.
     """
 
-    # use a list comprehension to transpose the coordinate pairs.
-    transposed_lst = [(coord_02, coord_01) for coord_01, coord_02 in coord_list]
+    # use a list comprehension to transpose the coordinate pairs
+    transposed_lst: list[tuple[float, float]] = [
+        (coord_02, coord_01) for coord_01, coord_02 in coord_list
+    ]
 
     return transposed_lst
 
 
-def get_h3_polygon_from_geojson(geojson: dict) -> "h3.LatLngPoly":
+def get_h3_polygon_from_geojson(geojson: dict) -> h3.LatLngPoly:
     """
     Get an ``h3.Polygon`` object instance from GeoJSON.
 
-    ..note ::
+    !! note
+
         The GeoJSON *must* be a single part polygon. Multipart polygons are *not supported.*.
 
     Args:
@@ -114,18 +137,18 @@ def get_h3_polygon_from_geojson(geojson: dict) -> "h3.LatLngPoly":
         ]
 
         # create an H3 Polygon object with the holes
-        h3_poly = h3.latlng_to_cell(poly_coords, hole_lst)
+        h3_poly = h3.LatLngPoly(poly_coords, hole_lst)
 
     else:
         # create an H3 Polygon object without the holes
-        h3_poly = h3.latlng_to_cell(poly_coords)
+        h3_poly = h3.LatLngPoly(poly_coords)
 
     return h3_poly
 
 
-def get_h3_polygon_from_esri_polygon(polygon: arcpy.Polygon) -> "h3.LatLngPoly":
+def get_h3_polygon_from_esri_polygon(polygon: arcpy.Polygon) -> h3.LatLngPoly:
     """
-    Get an ``h3.Polygon`` object instance from an ``arcpy.Polygon``.
+    Get an `h3.Polygon` object instance from an `arcpy.Polygon`.
 
     Args:
         polygon: An ArcPy Polygon object.
@@ -142,9 +165,10 @@ def get_h3_polygon_from_esri_polygon(polygon: arcpy.Polygon) -> "h3.LatLngPoly":
 
 @handle_features
 def polygon_to_h3_indices(
-    input_feature: Union[arcpy.Polygon, Tuple[Union[int, str], arcpy.Polygon]],
+    input_feature: Union[arcpy.Polygon, tuple[Union[int, str], arcpy.Polygon]],
     h3_resolution: int,
-) -> Set[str]:
+    contain: Literal["center", "full", "overlap", "bbox_overlap"] = "overlap",
+) -> set[str]:
     """
     Wrap ``h3.polygon_to_cells`` to handle converting ArcPy Polygon geometry to H3 Polygon geometry to
         get the H3 indices for the input geometry.
@@ -152,39 +176,79 @@ def polygon_to_h3_indices(
     Args:
         input_feature: Polygon with area to get H3 indices for.
         h3_resolution: H3 resolution to retrieve indices for.
+        contain: How the output indices' geometry is evaluated against the input area of interest geometry.
+          This value is passed directly to the ``h3.h3shape_to_cells_experimental`` function. Available options
+          include the following.
+          - ``center`` Cell center is contained in the shape
+          - ``full`` Cell is fully contained in the shape
+          - ``overlap`` Cell overlaps the shape at any point (default)
+          - ``bbox_overlap`` Cell bounding box overlaps shape
 
     Returns:
 
     """
+    # ensure contain is lowercase
+    contain = contain.lower()
+
+    # ensure contain is valid
+    valid_contain_opts = ["center", "full", "overlap", "bbox_overlap"]
+
+    if contain not in valid_contain_opts:
+        msg = f"Invalid contain option '{contain}'. Valid options are: {valid_contain_opts}"
+        logger.error(msg)
+        raise ValueError(msg)
+
     # convert the Esri Polygon to an H3 Polygon
     h3_poly = get_h3_polygon_from_esri_polygon(input_feature)
 
-    # get the H3 index for the geometry
-    idx = h3.h3shape_to_cells(h3_poly, res=h3_resolution)
+    # get the H3 index for the geometry including all cells touching the geometry
+    idx = h3.h3shape_to_cells_experimental(h3_poly, res=h3_resolution, contain=contain)
 
     return idx
 
 
-def get_h3_indices_for_esri_polygon(geom: arcpy.Polygon, resolution: int) -> Set[str]:
+def get_h3_indices_for_esri_polygon(
+        geom: arcpy.Polygon,
+        resolution: int,
+        contain: Literal["center", "full", "overlap", "bbox_overlap"] = "overlap",
+) -> set[str]:
     """
     Get a non-repeating Python set of H3 indices for an ``arcpy.Polygon``.
 
-    .. note::
+    !! note
+
         Multipart polygons *are not supported*.
 
     Args:
         geom: A single ArcPy Polygon geometry object.
         resolution: H3 resolution to retrieve indices for.
+        contain: How the output indices' geometry is evaluated against the input area of interest geometry.
+          This value is passed directly to the ``h3.h3shape_to_cells_experimental`` function. Available options
+          include the following.
+          - ``center`` Cell center is contained in the shape
+          - ``full`` Cell is fully contained in the shape
+          - ``overlap`` Cell overlaps the shape at any point (default)
+          - ``bbox_overlap`` Cell bounding box overlaps shape
 
     Returns:
         Set of unique H3 indices.
     """
+    # ensure contain is lowercase
+    contain = contain.lower()
+
+    # ensure contain is valid
+    valid_contain_opts = ["center", "full", "overlap", "bbox_overlap"]
+
+    if contain not in valid_contain_opts:
+        msg = f"Invalid contain option '{contain}'. Valid options are: {valid_contain_opts}"
+        logger.error(msg)
+        raise ValueError(msg)
 
     # start by getting an H3 Polygon from the ArcPy Polygon
     h3_poly = get_h3_polygon_from_esri_polygon(geom)
 
-    # use the H3 Polygon to get a set of unique indices
-    h3_idx_set = h3.h3shape_to_cells(h3_poly, res=resolution)
+    # get the H3 index for the geometry including all cells touching the geometry
+    h3_idx_set = h3.h3shape_to_cells_experimental(h3_poly, res=resolution, contain=contain)
 
     return h3_idx_set
 
@@ -262,19 +326,27 @@ def get_single_origin_k_neighbors(
 
 
 def get_k_neighbors(
-    origin_indices: list[str, int], k_dist: int
+    origin_indices: list[Union[str, int]], k_dist: int
 ) -> list[Union[int, str]]:
     """Get non-repeating K-distance neighbors for multiple origin H3 indices."""
     # create a dask dataframe to parallelize processing
     df = dd.from_array(np.array(origin_indices), columns=["origin_idx"])
 
-    # TODO: lookup number of threads available and distribute across cores
+    # ensure the origin indices are all a single type
+    idx_types = set(type(idx) for idx in origin_indices)
+    if len(idx_types) > 1:
+        msg = f"All origin_indices must be of the same type (either all str or all int). Found types: {idx_types}"
+        logger.error(msg)
+        raise ValueError(msg)
+
+    # save the type to a variable for later use
+    idx_typ = idx_types.pop()
 
     # use dask to distribut the k_neighbors lookup across multiple threads and speed up this bottleneck
     dest_idx_lst = (
         df["origin_idx"]
         .apply(
-            lambda idx: get_single_origin_k_neighbors(idx, 5), meta=("origin_idx", str)
+            lambda idx: get_single_origin_k_neighbors(idx, k_dist=5), meta=("origin_idx", idx_typ)
         )
         .explode()  # get every value in single row
         .drop_duplicates()  # remove duplicate values
