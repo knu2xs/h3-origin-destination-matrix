@@ -94,6 +94,9 @@ arcgis/.backups
 # make sure the environment is not included
 env/
 
+# for this project, exclude the dependency packages
+dependencies/
+
 # exclude the docs build directory
 docs/
 
