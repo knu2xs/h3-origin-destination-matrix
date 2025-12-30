@@ -8,7 +8,7 @@ version = "0.0.0"
 authors = [
   { name="Joel McCune (https://github.com/knu2xs)"},
 ]
-description = "Create an origin-destination matrix using H3 indices."
+description = "Create an origin-destination matrix using H3 indices with the ArcGIS Pro package, arcpy.nax."
 readme = "README.md"
 requires-python = ">=3.10"
 classifiers = [
@@ -17,10 +17,7 @@ classifiers = [
 ]
 license = {file = "LICENSE"}
 dependencies = [
-    "arcgis",
-    "dask[dataframe]",
-    "h3==4.*",
-    "pyarrow",
+    "h3==4.*"
 ]
 
 [tool.setuptools.packages.find]

@@ -5,13 +5,12 @@ __copyright__ = "Copyright 2023 by Joel McCune"
 
 __all__ = ["get_h3_indices_for_esri_polygon", "get_k_neighbors"]
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Union, Optional, Literal
 
 import arcpy
 import h3
 import h3.api.basic_int as h3_int
-import dask.dataframe as dd
-import numpy as np
 
 from ._logging import get_logger
 
@@ -326,12 +325,18 @@ def get_single_origin_k_neighbors(
 
 
 def get_k_neighbors(
-    origin_indices: list[Union[str, int]], k_dist: int
+    origin_indices: list[Union[str, int]], k_dist: int, max_workers: int = None
 ) -> list[Union[int, str]]:
-    """Get non-repeating K-distance neighbors for multiple origin H3 indices."""
-    # create a dask dataframe to parallelize processing
-    df = dd.from_array(np.array(origin_indices), columns=["origin_idx"])
-
+    """Get non-repeating K-distance neighbors for multiple origin H3 indices.
+    
+    Args:
+        origin_indices: List of H3 indices to get neighbors for.
+        k_dist: K-ring distance for neighbors.
+        max_workers: Maximum number of threads to use. If None, defaults to min(32, cpu_count() + 4).
+    
+    Returns:
+        List of unique destination H3 indices including all k-neighbors.
+    """
     # ensure the origin indices are all a single type
     idx_types = set(type(idx) for idx in origin_indices)
     if len(idx_types) > 1:
@@ -339,19 +344,28 @@ def get_k_neighbors(
         logger.error(msg)
         raise ValueError(msg)
 
-    # save the type to a variable for later use
-    idx_typ = idx_types.pop()
+    # use a set to collect all unique neighbors
+    all_neighbors = set()
+    
+    # use ThreadPoolExecutor to parallelize the k_neighbors lookup across multiple threads
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # submit all tasks
+        future_to_idx = {
+            executor.submit(get_single_origin_k_neighbors, idx, k_dist): idx 
+            for idx in origin_indices
+        }
+        
+        # collect results as they complete
+        for future in as_completed(future_to_idx):
+            try:
+                neighbors = future.result()
+                all_neighbors.update(neighbors)
+            except Exception as e:
+                idx = future_to_idx[future]
+                logger.error(f"Error getting neighbors for index {idx}: {e}")
+                raise
+    
+    # convert set to list
+    all_neighbors_lst = list(all_neighbors)
 
-    # use dask to distribut the k_neighbors lookup across multiple threads and speed up this bottleneck
-    dest_idx_lst = (
-        df["origin_idx"]
-        .apply(
-            lambda idx: get_single_origin_k_neighbors(idx, k_dist=5), meta=("origin_idx", idx_typ)
-        )
-        .explode()  # get every value in single row
-        .drop_duplicates()  # remove duplicate values
-        .compute()  # invoke parallel processing using Dask
-        .values.tolist()  # convert from Dask series to a list
-    )
-
-    return dest_idx_lst
+    return all_neighbors_lst

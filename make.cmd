@@ -63,12 +63,6 @@ GOTO %1
 
     GOTO end
 
-:: Remove the environment
-:remove_env
-    CALL conda deactivate
-    CALL conda env remove -p %CONDA_DIR% -y
-	GOTO end
-
 :: Start Jupyter Label
 :jupyter
     CALL conda run -p %CONDA_DIR% python -m jupyterlab --ip=0.0.0.0 --allow-root --NotebookApp.token=""
@@ -91,6 +85,14 @@ GOTO %1
 :black
     CALL conda run -p %CONDA_dIR% black src/ --verbose
     GOTO end
+
+:: add dependencies into dependencies directory for distibution
+:pkg_dependencies
+    CALL conda run -p %CONDA_DIR% python scripts/get_package_dependencies.py
+    GOTO end
+
+:pkg_deps
+    GOTO pkg_dependencies
 
 :lint
     GOTO black
