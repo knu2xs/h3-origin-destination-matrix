@@ -1,40 +1,125 @@
 # h3-origin-destination-matrix
 
-Create an origin-destination matrix using H3 indices.
+Create origin-destination (OD) matrices using H3 hexagonal indices and Esri Network Analyst for spatial analysis workflows.
+
+## Overview
+
+This project provides a Python toolkit for generating origin-destination matrices at scale using [H3 hexagonal spatial indexing](https://h3geo.org/) combined with Esri's Network Analyst extension. It's designed to streamline proximity analysis and accessibility modeling by computing distance or travel time relationships between H3 cell centroids across an area of interest.
+
+### Key Features
+
+- **H3-Based Analysis**: Leverage Uber's H3 hexagonal grid system for consistent, multi-resolution spatial analysis
+- **Network Analysis Integration**: Utilize Esri Network Analyst to calculate real-world travel distances and times (walking, driving, etc.)
+- **Scalable Processing**: Batch processing capabilities for handling large areas with thousands of origin-destination pairs
+- **Distance Decay Modeling**: Built-in sigmoid functions for modeling accessibility decay (e.g., to transit stops)
+- **Parquet Output**: Efficient storage and retrieval of OD matrices using Apache Parquet format
+- **ArcGIS Pro Integration**: Includes ArcGIS Pro project (`.aprx`) and Python Toolbox for GUI-based workflows
+
+### Use Cases
+
+- Accessibility analysis (e.g., transit stop catchment areas)
+- Spatial interaction modeling
+- Service area delineation
+- Urban mobility studies
+- Retail trade area analysis
 
 ## Getting Started
 
-1 - Clone this repo.
+### Prerequisites
 
-2 - Create an environment with the requirements.
-    
-```
-        > make env
+- ArcGIS Pro 3.x with Network Analyst extension
+- Conda (included with ArcGIS Pro)
+- A network dataset for routing analysis
+
+### Installation
+
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/knu2xs/h3-origin-destination-matrix.git
+   cd h3-origin-destination-matrix
+   ```
+
+2. Create the Conda environment:
+   ```bash
+   make env
+   ```
+   
+   Or if using ArcGIS Pro's default environment:
+   ```bash
+   make env_clone
+   ```
+
+3. Start exploring:
+   - **Python users**: Launch Jupyter Lab from the project root and explore `./notebooks`
+   - **GIS users**: Open `./arcgis/h3-origin-destination-matrix.aprx` in ArcGIS Pro
+
+### Quick Start Example
+
+```python
+import h3_od
+
+# Generate OD matrix for an area of interest
+h3_od.proximity.get_aoi_h3_origin_destination_distance_parquet(
+    area_of_interest="path/to/aoi_polygon.shp",
+    parquet_path="./data/processed/od_matrix",
+    h3_resolution=9,
+    network_dataset="path/to/network_dataset",
+    travel_mode="Walking Time",
+    max_distance=3.0,  # miles
+    search_distance=100,  # feet
+)
 ```
 
-3 - Explore - If you are more into Python, a good place to start is `jupyter lab` from the root of the project, and look in the `./notebooks` directory. If GIS is more your schtick, open the project `./arcgis/h3-origin-destination-matrix.aprx`.
 
 ## Using Make - common commands
 
-Based on the pattern provided in the [Cookiecutter Data Science template by Driven Data](https://drivendata.github.io/cookiecutter-data-science/) this template streamlines a number of commands using the `make` command pattern.
+Based on the pattern provided in the [Cookiecutter Data Science template by Driven Data](https://drivendata.github.io/cookiecutter-data-science/), this project streamlines common workflows using the `make` command pattern.
 
-- `make env` - builds the Conda environment with all the name and dependencies from `environment_dev.yml` and installs the local project package `h3_od` using the command `python -m pip install -e ./src/src/h3_od` so you can easily test against the package as you are developing it.
+- **`make env`** - Builds the Conda environment with all dependencies from `environment_dev.yml` and installs the local `h3_od` package in editable mode (`python -m pip install -e ./src`) for active development.
 
-- `make env_clone` - designed for environments using the default Conda instance installed with ArcGIS Pro. It is similar to `make env`, except this command clones the `arcgispro-py3` environment. Otherwise, it still installs the packages listed in `environment_dev.yml` and installs the local package using `pip` as described above.
+- **`make env_clone`** - Designed for ArcGIS Pro users. Clones the `arcgispro-py3` environment and installs dependencies from `environment_dev.yml` along with the local package, preserving compatibility with ArcGIS Pro's default environment.
 
-- `make docs` - builds Sphinx docs based on files in `./docsrc/source` and places them in `./docs`. This enables easy publishing in the master branch in GitHub.
+- **`make docs`** - Builds Sphinx documentation from files in `./docsrc` and outputs to `./docs` for easy GitHub Pages publishing.
 
-- `make test` - activates the environment created by the `make env` or `make env_clone` and runs all the tests in the `./testing` directory using PyTest. Alternately, if you prefer to use [TOX](https://tox.readthedocs.io) for testing (my preference), there is a `tox.ini` file included as well. The dependencies (`tox` and `tox-conda`) for using TOX are included in the default requirements. By default, the TOX file creates an environment from the `environment.yml` file using much fewer dependencies than the `*_dev.yml` files.
+- **`make test`** - Activates the project environment and runs all tests in `./testing` using PyTest. Alternatively, use [TOX](https://tox.readthedocs.io) with the included `tox.ini` configuration (dependencies included in default requirements).
 
-## BumpVersion Cliff Notes
+## Project Structure
 
-[Bump2Version](https://github.com/c4urself/bump2version) is preconfigured based on hints from [this article on Medium](https://williamhayes.medium.com/versioning-using-bumpversion-4d13c914e9b8).
+```
+├── arcgis/                  # ArcGIS Pro project and toolbox
+├── config/                  # Configuration files
+├── data/                    # Data directory (raw, interim, processed)
+├── notebooks/               # Jupyter notebooks for exploration
+├── scripts/                 # Processing scripts
+│   ├── make_data_for_aoi.py    # General AOI-based processing
+│   └── make_data_olympia.py    # Example workflow
+├── src/
+│   └── h3_od/              # Main Python package
+│       ├── proximity.py        # OD matrix calculation functions
+│       ├── distance_decay.py   # Distance decay modeling
+│       └── utils/             # Utility functions
+└── testing/                 # Unit tests
+```
 
-If you want to...
+## Configuration
 
-- apply a patch, `bumpversion patch`
-- update version with no breaking changes (minor version update), `bumpversion minor`
-- update version with breaking changes (major version update), `bumpversion major`
-- create a release (tagged in vesrion control - Git), `bumpversion --tag release`
+Edit `scripts/config.ini` to configure your analysis parameters:
 
-<p><small>Project based on the <a target="_blank" href="https://github.com/knu2xs/cookiecutter-geoai">cookiecutter GeoAI project template</a>. This template, in turn, is simply an extension and light modification of the <a target="_blank" href="https://drivendata.github.io/cookiecutter-data-science/">cookiecutter data science project template</a>. #cookiecutterdatascience</small></p>
+```ini
+[DEFAULT]
+AOI_POLYGON = data/raw/aoi.shp
+OUTPUT_OD_PARQUET = data/processed/od_matrix
+NETWORK_DATASET = C:/Path/To/Network_ND
+TRAVEL_MODE = Walking Time
+SNAP_DISTANCE = 100
+ORIGIN_BATCH_SIZE = 500
+H3_RESOLUTION = 9
+```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
