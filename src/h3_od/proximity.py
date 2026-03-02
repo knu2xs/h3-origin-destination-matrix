@@ -127,7 +127,7 @@ def validate_origin_destination_inputs(
                     geom = arcpy.PointGeometry(geom)
 
                 # ensure is correct geometry type
-                if not isinstance(geom, [arcpy.PointGeometry, arcpy.Polygon]):
+                if not isinstance(geom, (arcpy.PointGeometry, arcpy.Polygon)):
                     raise ValueError(
                         "Input features' geometry must be either PointGeometry or Polygon."
                     )
@@ -736,7 +736,7 @@ def get_h3_origin_destination_distance_using_coordinates(
     """
     # get the indices for the origin and destination locations
     h3_origin = h3.latlng_to_cell(
-        origin_coordinates[1], origin_coordinates[9], h3_resolution
+        origin_coordinates[1], origin_coordinates[0], h3_resolution
     )
     h3_dest = h3.latlng_to_cell(
         destination_coordinates[1], destination_coordinates[0], h3_resolution
