@@ -10,7 +10,19 @@ __all__ = [
 
 
 def preprocess_h3_index(h3_index: Union[str, int]) -> int:
-    """Helper function to preprocess the h3 index to integer representation."""
+    """
+    Preprocess an H3 index into its integer representation.
+
+    Handles H3 indices provided as hexadecimal strings, numeric strings, or
+    native integers, normalizing them to a consistent ``int`` form used by
+    the ``h3`` memview_int API.
+
+    Args:
+        h3_index: H3 index as a hexadecimal string, numeric string, or integer.
+
+    Returns:
+        Integer representation of the H3 index.
+    """
     # if the input value the H3 numeric value as a string, convert to integer
     if isinstance(h3_index, str):
         if h3_index.isnumeric():

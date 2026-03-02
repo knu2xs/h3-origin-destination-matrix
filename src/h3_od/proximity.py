@@ -50,6 +50,20 @@ logger = get_logger("h3_od.proximity", level="DEBUG", add_stream_handler=False)
 def validate_h3_index_list(
     input_features: List[Union[str, int]]
 ) -> List[Tuple[str, arcpy.PointGeometry]]:
+    """
+    Validate and normalize a list of H3 indices into tuples of index strings and point geometries.
+
+    Handles H3 indices provided as hexadecimal strings, integer strings, or native integers,
+    converting them to a consistent list of ``(h3_index, PointGeometry)`` tuples suitable for
+    use with ArcPy network analysis workflows.
+
+    Args:
+        input_features: List of H3 indices as hexadecimal strings, numeric strings, or integers.
+
+    Returns:
+        List of tuples where each element is an H3 index string paired with its corresponding
+        ``arcpy.PointGeometry`` in WGS 84 (WKID 4326).
+    """
     # get the first item to interrogate
     for first_itm in input_features:
         # if integers, convert to hexadecimal string
@@ -94,6 +108,31 @@ def validate_origin_destination_inputs(
         Path,
     ]
 ) -> Union[arcpy._mp.Layer, str, arcpy.FeatureSet]:
+    """
+    Validate and normalize origin or destination input features for network analysis.
+
+    Accepts a variety of input formats — H3 index lists, identifier-geometry tuples,
+    ArcPy layers, Spatially Enabled DataFrames, or paths to feature classes — and
+    converts them into a consistent format (layer path or feature set) that can be
+    consumed by the ArcPy NAX origin-destination cost matrix solver.
+
+    Args:
+        input_features: Input features in one of the following forms:
+
+            - A list of H3 indices (as ``int`` or ``str``).
+            - An iterable of ``(id, arcpy.Geometry)`` tuples.
+            - An ``arcpy._mp.Layer`` reference.
+            - A Spatially Enabled ``pd.DataFrame`` with Point or Polygon geometry.
+            - A ``str`` or ``Path`` pointing to a feature class on disk.
+
+    Returns:
+        The validated input features as an ``arcpy._mp.Layer`` path string,
+        layer reference, or ``arcpy.FeatureSet``.
+
+    Raises:
+        ValueError: If geometry type is not Point or Polygon, or if a DataFrame
+            fails spatial validation.
+    """
     # first check if the dataframe is spatially enabled AND point or polygon
     if isinstance(input_features, pd.DataFrame):
         if not input_features.spatial.validate():
@@ -175,6 +214,27 @@ def get_origin_destination_oid_col(
     input_features: Union[arcpy._mp.Layer, str, Path, Iterable, pd.DataFrame],
     id_column: str,
 ) -> str:
+    """
+    Determine the unique identifier column for origin or destination features.
+
+    Resolves the appropriate identifier column name depending on the input type.
+    For feature classes and layers, falls back to the OID field when no column is
+    explicitly provided.  For DataFrames the first column is used, and for other
+    iterables the default ``"oid"`` is returned.
+
+    Args:
+        input_features: The origin or destination features as a layer, feature
+            class path, iterable, or Spatially Enabled DataFrame.
+        id_column: Explicit column name to use as the unique identifier.  When
+            ``None``, a sensible default is inferred from the input type.
+
+    Returns:
+        Name of the unique identifier column for the given input features.
+
+    Raises:
+        ValueError: If the explicitly provided ``id_column`` does not exist in
+            the feature class schema.
+    """
     # if working with a feature class
     if isinstance(input_features, (arcpy._mp.Layer, str, Path)):
         # get destination unique id column if not explicitly provided for feature classes
