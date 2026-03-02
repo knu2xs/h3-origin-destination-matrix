@@ -184,7 +184,7 @@ def polygon_to_h3_indices(
           - ``bbox_overlap`` Cell bounding box overlaps shape
 
     Returns:
-
+        Set of H3 index strings for cells matching the containment criteria.
     """
     # ensure contain is lowercase
     contain = contain.lower()

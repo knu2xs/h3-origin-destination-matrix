@@ -310,7 +310,7 @@ def get_network_travel_modes(
         network_dataset: Optional path to network dataset being used.
 
     Returns:
-
+        List of travel mode name strings available for the network dataset.
     """
     # get the network dataset layer
     nds_lyr = get_network_dataset_layer(network_dataset)
@@ -331,7 +331,7 @@ def get_origin_destination_cost_matrix_solver(
     search_distance: Optional[float] = 0.25,
 ) -> arcpy._na._odcms.OriginDestinationCostMatrix:
     """
-
+    Create and configure an ArcPy NAX Origin-Destination Cost Matrix solver.
 
     Args:
         network_dataset: Optional path to network dataset to use.

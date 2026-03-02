@@ -109,7 +109,7 @@ def get_logger(
         logger_name: Name of the logger. If `None`, the root logger is used.
         level: Logging level to use. Default is INFO.
         log_format: Format string for the logging messages. Default is `'%(asctime)s | %(name)s | %(levelname)s | %(message)s'`.
-        propagate: If `True`, log messages are passed to the handlers of ancestor loggers. Default is `False`.
+        propagate: If `True`, log messages are passed to the handlers of ancestor loggers. Default is `True`.
         logfile_path: Where to save the logfile if file output is desired.
         add_stream_handler: If `True`, add a `StreamHandler` to route logging to the console. Default is `True`.
         add_arcpy_handler: If `True` and ArcPy is available, add the `ArcpyHandler` to route logging through
