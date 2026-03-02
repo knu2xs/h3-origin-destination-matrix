@@ -360,29 +360,76 @@ def get_origin_destination_parquet(
     Returns:
         Path to where Parquet dataset is saved.
     """
-    # make sure the location to save the parquet exists
-    if not parquet_path.exists():
+    # ensure parquet_path is a Path object
+    parquet_path = Path(parquet_path) if not isinstance(parquet_path, Path) else parquet_path
+
+    # determine if parquet_path refers to a single file or a directory
+    is_single_file = parquet_path.suffix == ".parquet" or (
+        parquet_path.exists() and parquet_path.is_file()
+    )
+
+    # make sure the location to save the parquet exists (only create directory for dataset-style output)
+    if not is_single_file and not parquet_path.exists():
         parquet_path.mkdir(parents=True)
 
     # get the resolution of the input H3 indices
     h3_resolution = h3_arcpy.get_h3_resolution(origin_h3_indices[0])
 
-    # if appending, get the list of preexisting origin ids to not have to solve for
-    if append:
-        existing_origin_id_lst = [
-            pth.name.split("=")[-1] for pth in parquet_path.glob("**/origin_id=*")
-        ]
-        logger.debug(
-            f"{len(existing_origin_id_lst):,} origins already solved for in output parquet data."
-        )
+    # check if existing parquet data is available for append filtering
+    has_existing_data = False
+    if append and parquet_path.exists():
+        if is_single_file:
+            has_existing_data = parquet_path.is_file()
+        else:
+            has_existing_data = any(parquet_path.iterdir())
 
-        original_len = len(origin_h3_indices)
-        if len(existing_origin_id_lst):
-            origin_h3_indices = [
-                idx for idx in origin_h3_indices if idx not in existing_origin_id_lst
-            ]
+    # if appending, use pyarrow dataset filtering to find preexisting origin (and optionally destination) ids
+    if has_existing_data:
+        try:
+            # open the existing parquet as a dataset — works for both single files and directories
+            ds_kwargs = {"source": parquet_path, "format": "parquet"}
+            if not is_single_file:
+                ds_kwargs["partitioning"] = "hive"
+            existing_ds = ds.dataset(**ds_kwargs)
+
+            # get existing origin ids using pyarrow dataset filtering
+            existing_origin_id_set = set(
+                pc.unique(
+                    existing_ds.to_table(columns=["origin_id"]).column("origin_id")
+                ).to_pylist()
+            )
             logger.debug(
-                f"Only have to solve for {len(origin_h3_indices):,} origins instead of {original_len:,}."
+                f"{len(existing_origin_id_set):,} origins already solved for in output parquet data."
+            )
+
+            original_len = len(origin_h3_indices)
+            if existing_origin_id_set:
+                origin_h3_indices = [
+                    idx for idx in origin_h3_indices if idx not in existing_origin_id_set
+                ]
+                logger.debug(
+                    f"Only have to solve for {len(origin_h3_indices):,} origins instead of {original_len:,}."
+                )
+
+            # optionally filter destination indices already present in the dataset
+            if destination_h3_indices is not None:
+                existing_dest_id_set = set(
+                    pc.unique(
+                        existing_ds.to_table(columns=["destination_id"]).column("destination_id")
+                    ).to_pylist()
+                )
+                destination_h3_indices = [
+                    idx for idx in destination_h3_indices if idx not in existing_dest_id_set
+                ]
+                logger.debug(
+                    f"{len(existing_dest_id_set):,} destinations already present; "
+                    f"{len(destination_h3_indices):,} new destinations remaining."
+                )
+
+        except Exception as e:
+            logger.warning(
+                f"Unable to read existing parquet dataset for append filtering: {e}. "
+                f"Proceeding without filtering."
             )
 
     # get the count of input features for batching
@@ -553,15 +600,16 @@ def get_origin_destination_parquet(
             logger.debug(f"Successfully saved batch parquet index: {batch_idx}.")
 
         else:
-            # save empty values as placeholder, so have record of unroutable origins
+            # save empty values as placeholder, so have record of all unroutable origins in this batch
             tmp_lst = [
                 {
                     "h3_resolution": h3_resolution,
-                    "origin_id": origin_idx,
+                    "origin_id": unroutable_idx,
                     "destination_id": None,
                     "distance_miles": None,
                     "time": None,
                 }
+                for unroutable_idx in batch_origin_lst
             ]
 
             # create a pyarrow table from the result list
@@ -572,13 +620,14 @@ def get_origin_destination_parquet(
             pq.write_to_dataset(
                 solve_tbl,
                 root_path=parquet_path,
-                partition_cols=["origin_id"],
+                partition_cols=["h3_resolution", "origin_id"],
                 compression="snappy",
                 existing_data_behavior="delete_matching",
             )
 
             logger.debug(
-                f"No valid origin-destination candidates found for {origin_idx}."
+                f"No valid origin-destination candidates found for {len(batch_origin_lst):,} "
+                f"origins in batch {batch_idx}."
             )
 
     logger.info(
