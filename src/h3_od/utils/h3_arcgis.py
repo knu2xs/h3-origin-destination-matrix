@@ -3,6 +3,10 @@ from typing import Union
 from arcgis.geometry import Polygon, Point
 from h3.api import memview_int as h3_int
 
+from ._logging import get_logger
+
+logger = get_logger(__name__, level="DEBUG", add_stream_handler=False)
+
 __all__ = [
     "get_arcpy_point_for_h3_index",
     "get_arcgis_polygon_for_h3_index",

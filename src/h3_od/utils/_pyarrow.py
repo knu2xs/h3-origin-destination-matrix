@@ -2,6 +2,10 @@ from pathlib import Path
 
 import pyarrow.dataset as ds
 
+from ._logging import get_logger
+
+logger = get_logger(__name__, level="DEBUG", add_stream_handler=False)
+
 __all__ = ["get_pyarrow_dataset_from_parquet"]
 
 

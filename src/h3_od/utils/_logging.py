@@ -6,7 +6,7 @@ from typing import Union, Optional
 
 from ._main import has_arcpy
 
-__all__ = ["configure_logging"]
+__all__ = ["get_logger"]
 
 if importlib.util.find_spec("pandas") is None:
     has_pandas = False
@@ -148,9 +148,6 @@ def get_logger(
     logger = logging.getLogger(logger_name)
     logger.setLevel(level=level)
 
-    # clear handlers
-    logger.handlers.clear()
-
     # configure formatting
     log_frmt = logging.Formatter(log_format)
 
@@ -182,97 +179,6 @@ def get_logger(
         logger.addHandler(fh)
 
     return logger
-
-
-# setup logging
-def configure_logging(
-    level: Optional[Union[str, int]] = "INFO",
-    logfile_path: Union[Path, str] = None,
-) -> logging.Logger:
-    """
-    Get Python :class:`Logger<logging.Logger>` configured to provide stream, file or, if available, ArcPy output.
-    The way the method is set up, logging will be routed through ArcPy messaging using :class:`ArcpyHandler` if
-    ArcPy is available. If ArcPy is *not* available, messages will be sent to the console using a
-    :class:`StreamHandler<logging.StreamHandler>`. Next, if the ``logfile_path`` is provided, log messages will also
-    be written to the provided path to a logfile using a :class:`FileHandler<logging.FileHandler>`.
-
-    Valid ``log_level`` inputs include:
-    * ``DEBUG`` - Detailed information, typically of interest only when diagnosing problems.
-    * ``INFO`` - Confirmation that things are working as expected.
-    * ``WARNING`` or ``WARN`` -  An indication that something unexpected happened, or indicative of some problem in the
-            near future (e.g. ‘disk space low’). The software is still working as expected.
-    * ``ERROR`` - Due to a more serious problem, the software has not been able to perform some function.
-    * ``CRITICAL`` - A serious error, indicating that the program itself may be unable to continue running.
-
-    Args:
-        level: Logging level to use. Default is `'INFO'`.
-        logfile_path: Where to save the logfile if file output is desired.
-
-    ```python
-    # only output to console and potentially Pro if ArcPy is available
-    configure_logging('DEBUG')
-    logging.debug('nauseatingly detailed debugging message')
-    logging.info('something actually useful to know')
-    logging.warning('The sky may be falling')
-    logging.error('The sky is falling.')
-    logging.critical('The sky appears to be falling because a giant meteor is colliding with the earth.')
-    ```
-
-    """
-    # ensure valid logging level
-    log_str_lst = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "WARN", "FATAL"]
-    log_int_lst = [0, 10, 20, 30, 40, 50]
-
-    if not isinstance(level, (str, int)):
-        raise ValueError(
-            "You must define a specific logging level for log_level as a string or integer."
-        )
-    elif isinstance(level, str) and level not in log_str_lst:
-        raise ValueError(
-            f'The log_level must be one of {log_str_lst}. You provided "{level}".'
-        )
-    elif isinstance(level, int) and level not in log_int_lst:
-        raise ValueError(
-            f"If providing an integer for log_level, it must be one of the following, {log_int_lst}."
-        )
-
-    # get default logger
-    logger = logging.getLogger()
-
-    # set the logging level
-    logger.setLevel(level)
-
-    # configure formatting
-    log_frmt = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-    # if in an environment with ArcPy, add handler to bubble logging up to ArcGIS through ArcPy
-    if has_arcpy:
-        ah = ArcpyHandler()
-        ah.setFormatter(log_frmt)
-        logger.addHandler(ah)
-
-    # create handler to console if arcpy is not providing status
-    else:
-        ch = logging.StreamHandler()
-        ch.setFormatter(log_frmt)
-        logger.addHandler(ch)
-
-    # if a path for the logfile is provided, log results to the file
-    if logfile_path is not None:
-        # ensure the full path exists
-        if not logfile_path.parent.exists():
-            logfile_path.parent.mkdir(parents=True)
-
-        # create and add the file handler
-        fh = logging.FileHandler(str(logfile_path))
-        fh.setFormatter(log_frmt)
-        logger.addHandler(fh)
-
-    # keep logging from bubbling up - keep messages just in these handlers
-    logger.propagate = False
-
-    return logger
-
 
 def format_pandas_for_logging(
     pandas_df: pd.DataFrame, title: str, line_tab_prefix="\t\t"

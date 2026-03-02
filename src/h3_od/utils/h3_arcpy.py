@@ -5,6 +5,8 @@ __copyright__ = "Copyright 2023 by Joel McCune"
 
 __all__ = ["get_h3_indices_for_esri_polygon", "get_k_neighbors"]
 
+import functools
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Union, Optional, Literal
 
@@ -28,9 +30,10 @@ def get_h3_resolution(h3_index: Union[str, int]) -> int:
 
     return res
 
-def handle_features(fn):
+def handle_features(fn: Callable) -> Callable:
     """Decorator to take care of input_features validation and handling possibility of including a UID in a tuple."""
 
+    @functools.wraps(fn)
     def hndl_feat(*args, **kwargs):
         # get the input feature and update either args or kwargs
         if len(args) > 0:

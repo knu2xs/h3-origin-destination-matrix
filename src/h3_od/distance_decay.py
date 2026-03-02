@@ -7,6 +7,10 @@ from typing import Union
 
 import numpy as np
 
+from .utils._logging import get_logger
+
+logger = get_logger(__name__, level="DEBUG", add_stream_handler=False)
+
 __all__ = [
     "get_sigmoid_distance_decay_index",
     "get_bus_stop_distance_decay_index",
