@@ -43,8 +43,8 @@ def tmp_dir() -> Path:
 
 
 @pytest.fixture(scope="function")
-def tmp_gdb(temp_dir) -> Path:
-    temp_gdb = arcpy.management.CreateFileGDB(str(temp_dir), "temp.gdb")[0]
+def tmp_gdb(tmp_dir) -> Path:
+    temp_gdb = arcpy.management.CreateFileGDB(str(tmp_dir), "temp.gdb")[0]
     temp_gdb = Path(temp_gdb)
     yield temp_gdb
     arcpy.management.Delete(temp_gdb)
