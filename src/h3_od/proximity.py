@@ -269,7 +269,7 @@ def get_network_dataset_layer(
     Args:
         network_dataset: Optional path to network dataset being used.
 
-    !! note
+    !!! note
 
         If not specified, uses network solver set in Environment settings.
 
@@ -302,7 +302,7 @@ def get_network_travel_modes(
     """
     Get the travel modes, which can be used when solving for a network.
 
-    !! note
+    !!! note
 
         If not specified, uses network solver set in Environment settings.
 

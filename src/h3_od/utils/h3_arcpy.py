@@ -83,7 +83,7 @@ def transpose_coordinate_list(
     """
     Since the `h3` library expects coordinate pairs as `y, x`, use this function to transpose coordinate lists.
 
-    !! note
+    !!! note
 
         This is useful for converting lists of ``x, y`` coordinates to ``y, x`` for input into H3 functions, but
         also is useful for converting outputs from H3 functions from ``y, x`` to ``x,  y`` for use with ArcPy and
@@ -108,7 +108,7 @@ def get_h3_polygon_from_geojson(geojson: dict) -> h3.LatLngPoly:
     """
     Get an ``h3.Polygon`` object instance from GeoJSON.
 
-    !! note
+    !!! note
 
         The GeoJSON *must* be a single part polygon. Multipart polygons are *not supported.*.
 
@@ -214,7 +214,7 @@ def get_h3_indices_for_esri_polygon(
     """
     Get a non-repeating Python set of H3 indices for an ``arcpy.Polygon``.
 
-    !! note
+    !!! note
 
         Multipart polygons *are not supported*.
 
