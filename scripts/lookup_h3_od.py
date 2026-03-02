@@ -1,11 +1,15 @@
-import datetime
-from configparser import ConfigParser
-import logging
+"""Script to look up H3 origin-destination distances from a solved matrix."""
 from pathlib import Path
 import importlib.util
+import os
 import sys
 
-import arcpy
+# ---------------------------------------------------------------------------
+# Set the environment (or override with PROJECT_ENV env var)
+# This MUST be set before importing h3_od so config.py picks it up.
+# ---------------------------------------------------------------------------
+if "PROJECT_ENV" not in os.environ:
+    os.environ["PROJECT_ENV"] = "dev"
 
 # path to the root of the project
 dir_prj = Path(__file__).parent.parent
@@ -24,33 +28,25 @@ if importlib.util.find_spec("h3_od") is None:
 
 # import h3_od
 import h3_od
+from h3_od.utils import get_logger
+from h3_od.config import LOG_LEVEL, OUTPUT_OD_PARQUET
 
-# read and configure
-config = ConfigParser()
-config.read(Path(__file__).parent / "config.ini")
+if __name__ == "__main__":
 
-# config group to retrieve
-config_group = "SCOTTSDALE_WALK"
+    od_parquet = Path(OUTPUT_OD_PARQUET)
 
-log_level = config.get(config_group, "LOG_LEVEL")
-od_parquet = Path(config.get(config_group, "OUTPUT_OD_PARQUET"))
+    # configure logging
+    logger = get_logger(logger_name=Path(__file__).stem, level=LOG_LEVEL)
 
-# path for saving logging
-# dt_str = datetime.datetime.now().strftime("%Y%m%d%H%M")
-# log_pth = od_parquet.parent / f"od_solve_{dt_str}.log"
+    # origin and destination
+    h3_origin, h3_dest = "8829b60921fffff", "8829b60929fffff"
 
-# configure logging
-logger = h3_od.utils.get_logger(level=log_level)
+    # retrieve dist
+    res = h3_od.proximity.get_h3_origin_destination_distance(
+        origin_destination_dataset=od_parquet,
+        h3_origin=h3_origin,
+        # h3_destination=h3_dest,
+        add_geometry=True,
+    )
 
-# origin and destination
-h3_origin, h3_dest = "8829b60921fffff", "8829b60929fffff"
-
-# retrieve dist
-res = h3_od.proximity.get_h3_origin_destination_distance(
-    origin_destination_dataset=od_parquet,
-    h3_origin=h3_origin,
-    # h3_destination=h3_dest,
-    add_geometry=True,
-)
-
-assert res
+    assert res

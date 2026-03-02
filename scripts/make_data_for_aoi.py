@@ -1,6 +1,5 @@
+"""Script to generate an origin-destination matrix for an area of interest."""
 import datetime
-from configparser import ConfigParser
-import logging
 from pathlib import Path
 import importlib.util
 import sys
@@ -22,38 +21,44 @@ if importlib.util.find_spec("h3_od") is None:
 
 # import h3_od
 import h3_od
-
-# read and configure
-config = ConfigParser()
-config.read(Path(__file__).parent / "config.ini")
-
-LOG_LEVEL = config.get("DEFAULT", "LOG_LEVEL")
-AOI_FEATURES = dir_prj / config.get("DEFAULT", "AOI_POLYGON")
-OD_PARQUET = dir_prj / config.get("DEFAULT", "OUTPUT_OD_PARQUET")
-SNAP_DISTANCE = float(config.get('DEFAULT', 'SNAP_DISTANCE'))
-NETWORK_DATASET = Path(config.get("DEFAULT", "NETWORK_DATASET"))
-TRAVEL_MODE = config.get('DEFAULT', 'TRAVEL_MODE')
-ORIGIN_BATCH_SIZE = int(config.get("DEFAULT", "ORIGIN_BATCH_SIZE"))
-
-# path for saving logging
-dt_str = datetime.datetime.now().strftime("%Y%m%d%H%M")
-log_pth = OD_PARQUET.parent / f"{Path(__file__).stem}_{dt_str}.log"
-
-# configure logging
-logger = h3_od.utils._logging.get_logger(level=log_level, logfile_path=log_pth)
-
-logging.info(
-    f"Solving origin-destination matrix using {NETWORK_DATASET} and saving to {od_parquet}."
+from h3_od.utils import get_logger
+from h3_od.config import (
+    LOG_LEVEL,
+    AOI_POLYGON,
+    OUTPUT_OD_PARQUET,
+    SNAP_DISTANCE,
+    NETWORK_DATASET,
+    TRAVEL_MODE,
+    MAX_DISTANCE,
+    ORIGIN_BATCH_SIZE,
 )
 
-# create the origin-destination matrix
-h3_od.proximity.get_aoi_h3_origin_destination_distance_parquet(
-    area_of_interest=aoi_features,
-    parquet_path=od_parquet,
-    h3_resolution=h3_resolution,
-    network_dataset=network_dataset,
-    travel_mode=travel_mode,
-    max_distance=180.0,
-    search_distance=snap_distance,
-    origin_batch_size=origin_batch_size,
-)
+if __name__ == "__main__":
+
+    # resolve paths
+    aoi_features = Path(AOI_POLYGON)
+    od_parquet = Path(OUTPUT_OD_PARQUET)
+    network_dataset = Path(NETWORK_DATASET)
+
+    # path for saving logging
+    dt_str = datetime.datetime.now().strftime("%Y%m%d%H%M")
+    log_pth = od_parquet.parent / f"{Path(__file__).stem}_{dt_str}.log"
+
+    # configure logging
+    logger = get_logger(logger_name=Path(__file__).stem, level=LOG_LEVEL, logfile_path=log_pth)
+
+    logger.info(
+        f"Solving origin-destination matrix using {network_dataset} and saving to {od_parquet}."
+    )
+
+    # create the origin-destination matrix
+    h3_od.proximity.get_aoi_h3_origin_destination_distance_parquet(
+        area_of_interest=aoi_features,
+        parquet_path=od_parquet,
+        h3_resolution=int(h3_od.config.H3_RESOLUTION),
+        network_dataset=network_dataset,
+        travel_mode=TRAVEL_MODE,
+        max_distance=MAX_DISTANCE,
+        search_distance=SNAP_DISTANCE,
+        origin_batch_size=ORIGIN_BATCH_SIZE,
+    )
