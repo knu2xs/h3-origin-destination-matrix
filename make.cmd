@@ -2,7 +2,7 @@
 :: LICENSING                                                                    :
 :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 ::
-:: Copyright 2020 Esri
+:: Copyright 2025 Esri
 ::
 :: Licensed under the Apache License, Version 2.0 (the "License"); You
 :: may not use this file except in compliance with the License. You may
@@ -29,6 +29,17 @@ SET PROJECT_NAME=h3-origin-destination-matrix
 SET SUPPORT_LIBRARY = h3_od
 SET CONDA_DIR="%~dp0env"
 
+:: Get ArcGIS Pro installation path from registry
+FOR /F "tokens=2*" %%A IN ('REG QUERY "HKEY_LOCAL_MACHINE\SOFTWARE\ESRI\ArcGISPro" /v InstallDir 2^>nul') DO SET ARCGIS_PRO_DIR=%%B
+
+:: If registry query fails, fall back to default location
+IF NOT DEFINED ARCGIS_PRO_DIR (
+    SET ARCGIS_PRO_DIR="C:\Program Files\ArcGIS\Pro"
+)
+
+:: Set the ArcGIS Pro Python environment path
+SET ARCGIS_PRO_PYTHON="%ARCGIS_PRO_DIR%\bin\Python\envs\arcgispro-py3"
+
 :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 :: COMMANDS                                                                     :
 :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
@@ -54,7 +65,7 @@ GOTO %1
 :: Build the local environment from the environment file
 :env
     :: Create new environment from environment file
-    CALL conda create -p %CONDA_DIR% --clone "C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3"
+    CALL conda create -p %CONDA_DIR% --clone %ARCGIS_PRO_PYTHON% -y
     GOTO add_dependencies
 
 :: Add python dependencies from environment.yml to the project environment
@@ -71,6 +82,11 @@ GOTO %1
 :: Start Jupyter Label
 :jupyter
     CALL conda run -p %CONDA_DIR% python -m jupyterlab --ip=0.0.0.0 --allow-root --NotebookApp.token=""
+    GOTO end
+
+:: Make *.pyt zipped archive with requirements
+:pytzip
+    CALL conda run -p %CONDA_DIR% python -m scripts/make_pyt_archive.py
     GOTO end
 
 :: Make the package for uploading
@@ -90,14 +106,6 @@ GOTO %1
 :black
     CALL conda run -p %CONDA_dIR% black src/ --verbose
     GOTO end
-
-:: add dependencies into dependencies directory for distibution
-:pkg_dependencies
-    CALL conda run -p %CONDA_DIR% python scripts/get_package_dependencies.py
-    GOTO end
-
-:pkg_deps
-    GOTO pkg_dependencies
 
 :lint
     GOTO black
