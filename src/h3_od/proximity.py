@@ -41,7 +41,7 @@ arcpy.env.overwriteOutput = True
 arcpy.CheckOutExtension("network")
 
 # variables for network solves - some may have to be updated for doing international analysis
-iso2 = "US"
+COUNTRY_ISO2 = "US"
 
 # configure logging
 logger = get_logger("h3_od.proximity", level="DEBUG", add_stream_handler=False)
@@ -278,7 +278,7 @@ def get_network_dataset_layer(
     """
     # get the path to the country network dataset if it does not exist
     if network_dataset is None:
-        network_dataset = Country(iso2).properties.network_path
+        network_dataset = Country(COUNTRY_ISO2).properties.network_path
 
     # ensure is string for GP
     if isinstance(network_dataset, Path):
