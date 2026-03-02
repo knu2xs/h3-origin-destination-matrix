@@ -23,16 +23,18 @@ class ArcpyHandler(logging.Handler):
     DEBUG and INFO logging messages are be handled by the AddMessage method. WARNING logging messages are handled
     by the AddWarning method. ERROR and CRITICAL logging messages are handled by the AddError method.
     Basic use consists of the following.
-    .. code-block:: python
-        logger = logging.getLogger('arcpy-logger')
-        logger.setLevel('INFO')
-        ah = ArcpyHandler()
-        logger.addHandler(ah)
-        logger.debug('nauseatingly detailed debugging message')
-        logger.info('something actually useful to know')
-        logger.warning('The sky may be falling')
-        logger.error('The sky is falling.)
-        logger.critical('The sky appears to be falling because a giant meteor is colliding with the earth.')
+
+    ```python
+    logger = logging.getLogger('arcpy-logger')
+    logger.setLevel('INFO')
+    ah = ArcpyHandler()
+    logger.addHandler(ah)
+    logger.debug('nauseatingly detailed debugging message')
+    logger.info('something actually useful to know')
+    logger.warning('The sky may be falling')
+    logger.error('The sky is falling.')
+    logger.critical('The sky appears to be falling because a giant meteor is colliding with the earth.')
+    ```
     """
 
     # since everything goes through ArcPy methods, we do not need a message line terminator
@@ -206,15 +208,15 @@ def configure_logging(
         level: Logging level to use. Default is `'INFO'`.
         logfile_path: Where to save the logfile if file output is desired.
 
-    .. code-block:: python
-
-        # only output to console and potentially Pro if ArcPy is available
-        configure_logging('DEBUG')
-        logging.debug('nauseatingly detailed debugging message')
-        logging.info('something actually useful to know')
-        logging.warning('The sky may be falling')
-        logging.error('The sky is falling.)
-        logging.critical('The sky appears to be falling because a giant meteor is colliding with the earth.')
+    ```python
+    # only output to console and potentially Pro if ArcPy is available
+    configure_logging('DEBUG')
+    logging.debug('nauseatingly detailed debugging message')
+    logging.info('something actually useful to know')
+    logging.warning('The sky may be falling')
+    logging.error('The sky is falling.')
+    logging.critical('The sky appears to be falling because a giant meteor is colliding with the earth.')
+    ```
 
     """
     # ensure valid logging level
@@ -279,9 +281,9 @@ def format_pandas_for_logging(
     Helper function facilitating outputting a :class:`Pandas DataFrame<pandas.DataFrame>` into a logfile. This function only
         formats the data frame into text for output. It should be used in conjunction with a logging method.
 
-    .. code-block:: python
-
-        logging.info(format_pandas_for_logging(df, title='Summary Statistics'))
+    ```python
+    logging.info(format_pandas_for_logging(df, title='Summary Statistics'))
+    ```
 
     Args:
         pandas_df: Pandas ``DataFrame`` to be converted to a string and included in the logfile.
