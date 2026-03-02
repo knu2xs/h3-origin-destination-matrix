@@ -65,7 +65,7 @@ def get_arcgis_polygon_for_h3_index(h3_index: Union[str, int]) -> Polygon:
     return geom
 
 
-def get_arcpy_point_for_h3_index(h3_index: Union[str, int]) -> Point:
+def get_arcgis_point_for_h3_index(h3_index: Union[str, int]) -> Point:
     """
     For a single H3 index, get the ArcGIS Point geometry for the index.
 
