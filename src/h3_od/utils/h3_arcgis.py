@@ -54,7 +54,7 @@ def get_arcgis_polygon_for_h3_index(h3_index: Union[str, int]) -> Polygon:
     # get the coordinates for the index
     coord_lst = h3_int.cell_to_boundary(h3_index)
 
-    # create an ArcPy geometry object for the index
+    # create an ArcGIS geometry object for the index
     geom = Polygon(
         {
             "rings": [[[coords[1], coords[0]] for coords in coord_lst]],
@@ -73,14 +73,14 @@ def get_arcgis_point_for_h3_index(h3_index: Union[str, int]) -> Point:
         h3_index: H3 index.
 
     Returns:
-        ArcPy point geometry for the index.
+        ArcGIS point geometry for the index.
     """
     h3_index = preprocess_h3_index(h3_index)
 
     # get the coordinates for the index
     coords = h3_int.cell_to_latlng(h3_index)
 
-    # create an ArcPy geometry object for the index
+    # create an ArcGIS geometry object for the index
     geom = Point({"x": coords[1], "y": coords[0], "spatialReference": {"wkid": 4326}})
 
     return geom
