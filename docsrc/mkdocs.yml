@@ -78,7 +78,7 @@ plugins:
 
   # extension to include markdown files within other markdown files
   - include-markdown:
-      encoding: ascii
+      encoding: utf-8
       preserve_includer_indent: false
       dedent: false
       trailing_newlines: true
@@ -95,9 +95,6 @@ plugins:
       # explicitly enable generation of objects.ini facilitating intersphinx mapping
       enable_inventory: true
 
-      # optional: do not show the root heading of the documented module
-      show_root_heading: false
-
       handlers:
         python:
 
@@ -113,3 +110,6 @@ plugins:
           # use Google docstrings style
           options:
             docstring_style: google
+
+            # optional: do not show the root heading of the documented module
+            show_root_heading: false
