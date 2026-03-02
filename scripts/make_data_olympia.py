@@ -47,9 +47,9 @@ dt_str = datetime.datetime.now().strftime("%Y%m%d%H%M")
 log_pth = od_parquet.parent / f"od_solve_{dt_str}.log"
 
 # configure logging
-h3_od.utils.logging_utils.configure_logging(log_level, logfile_path=log_pth)
+logger = h3_od.utils.get_logger(level=log_level, logfile_path=log_pth)
 
-logging.info(
+logger.info(
     f"Solving origin-destination matrix using {network_dataset} using H3 resolution {h3_resolution}, and "
     f"saving to {od_parquet}."
 )

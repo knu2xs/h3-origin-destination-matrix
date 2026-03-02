@@ -40,7 +40,7 @@ od_parquet = Path(config.get(config_group, "OUTPUT_OD_PARQUET"))
 # log_pth = od_parquet.parent / f"od_solve_{dt_str}.log"
 
 # configure logging
-h3_od.utils.configure_logging(log_level)
+logger = h3_od.utils.get_logger(level=log_level)
 
 # origin and destination
 h3_origin, h3_dest = "8829b60921fffff", "8829b60929fffff"
