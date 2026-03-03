@@ -30,6 +30,7 @@ def get_h3_resolution(h3_index: Union[str, int]) -> int:
 
     return res
 
+
 def handle_features(fn: Callable) -> Callable:
     """Decorator to take care of input_features validation and handling possibility of including a UID in a tuple."""
 
@@ -210,9 +211,9 @@ def polygon_to_h3_indices(
 
 
 def get_h3_indices_for_esri_polygon(
-        geom: arcpy.Polygon,
-        resolution: int,
-        contain: Literal["center", "full", "overlap", "bbox_overlap"] = "overlap",
+    geom: arcpy.Polygon,
+    resolution: int,
+    contain: Literal["center", "full", "overlap", "bbox_overlap"] = "overlap",
 ) -> set[str]:
     """
     Get a non-repeating Python set of H3 indices for an ``arcpy.Polygon``.
@@ -250,9 +251,55 @@ def get_h3_indices_for_esri_polygon(
     h3_poly = get_h3_polygon_from_esri_polygon(geom)
 
     # get the H3 index for the geometry including all cells touching the geometry
-    h3_idx_set = h3.h3shape_to_cells_experimental(h3_poly, res=resolution, contain=contain)
+    h3_idx_set = h3.h3shape_to_cells_experimental(
+        h3_poly, res=resolution, contain=contain
+    )
 
     return h3_idx_set
+
+
+def get_h3_index_for_esri_geometry(
+    geom: Union[arcpy.PointGeometry, arcpy.Polygon], resolution: int
+) -> str:
+    """
+    Get an H3 index for an ArcPy geometry.
+
+    Args:
+        geom: An ArcPy geometry object. If a point geometry is provided, the H3 index for the cell containing the point will be returned. If a polygon geometry is provided, the H3 index for the cell containing the centroid of the polygon will be returned.
+        resolution: H3 resolution to retrieve index for.
+    """
+    # if a sting, check if integer and convert to integer
+    if isinstance(resolution, str):
+        if resolution.isnumeric():
+            resolution = int(resolution)
+        else:
+            msg = f"Invalid H3 resolution '{resolution}'. Resolution must be an integer between 0 and 15."
+            logger.error(msg)
+            raise ValueError(msg)
+
+    # validate the resolution is between 0 and 15
+    if not (0 <= resolution <= 15):
+        msg = f"Invalid H3 resolution '{resolution}'. Resolution must be between 0 and 15."
+        logger.error(msg)
+        raise ValueError(msg)
+
+    # if the geometry is a point, get the H3 index for the cell containing the point
+    if isinstance(geom, arcpy.PointGeometry):
+        coords = geom.firstPoint
+
+    # if the geometry is a polygon, get the H3 index for the cell containing the centroid of the polygon
+    elif isinstance(geom, arcpy.Polygon):
+        coords = geom.centroid
+
+    else:
+        msg = f"Unsupported geometry type '{type(geom)}'. Only arcpy.PointGeometry and arcpy.Polygon are supported."
+        logger.error(msg)
+        raise ValueError(msg)
+
+    # get the H3 index for the coordinates
+    h3_index = h3.latlng_to_cell(coords.Y, coords.X, resolution)
+
+    return h3_index
 
 
 def get_arcpy_polygon_for_h3_index(h3_index: Union[str, int]) -> arcpy.Polygon:
@@ -331,12 +378,12 @@ def get_k_neighbors(
     origin_indices: list[Union[str, int]], k_dist: int, max_workers: int = None
 ) -> list[Union[int, str]]:
     """Get non-repeating K-distance neighbors for multiple origin H3 indices.
-    
+
     Args:
         origin_indices: List of H3 indices to get neighbors for.
         k_dist: K-ring distance for neighbors.
         max_workers: Maximum number of threads to use. If None, defaults to min(32, cpu_count() + 4).
-    
+
     Returns:
         List of unique destination H3 indices including all k-neighbors.
     """
@@ -349,15 +396,15 @@ def get_k_neighbors(
 
     # use a set to collect all unique neighbors
     all_neighbors = set()
-    
+
     # use ThreadPoolExecutor to parallelize the k_neighbors lookup across multiple threads
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # submit all tasks
         future_to_idx = {
-            executor.submit(get_single_origin_k_neighbors, idx, k_dist): idx 
+            executor.submit(get_single_origin_k_neighbors, idx, k_dist): idx
             for idx in origin_indices
         }
-        
+
         # collect results as they complete
         for future in as_completed(future_to_idx):
             try:
@@ -367,7 +414,7 @@ def get_k_neighbors(
                 idx = future_to_idx[future]
                 logger.error(f"Error getting neighbors for index {idx}: {e}")
                 raise
-    
+
     # convert set to list
     all_neighbors_lst = list(all_neighbors)
 

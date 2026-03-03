@@ -26,6 +26,7 @@ Usage::
     # check current environment
     print(f"Running in {ENVIRONMENT} mode")
 """
+
 from __future__ import annotations
 
 import os
@@ -33,6 +34,11 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import yaml
+
+from .utils import get_logger
+
+# Set up a module-level logger
+logger = get_logger("h3_od.config", level="DEBUG", add_stream_handler=False)
 
 # ---------------------------------------------------------------------------
 # Project root – three levels up from this file
@@ -97,7 +103,9 @@ class ConfigNode:
             if isinstance(value, ConfigNode):
                 out[key] = value.to_dict()
             elif isinstance(value, list):
-                out[key] = [v.to_dict() if isinstance(v, ConfigNode) else v for v in value]
+                out[key] = [
+                    v.to_dict() if isinstance(v, ConfigNode) else v for v in value
+                ]
             else:
                 out[key] = value
         return out
@@ -116,9 +124,7 @@ class ConfigNode:
 def _load_yaml(path: Path) -> dict[str, Any]:
     """Read a YAML file and return its contents as a dictionary."""
     if not path.exists():
-        raise FileNotFoundError(
-            f"Configuration file not found: {path}"
-        )
+        raise FileNotFoundError(f"Configuration file not found: {path}")
     with open(path, encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     if data is None:
@@ -216,7 +222,7 @@ def load_config(
 
     # deep-merge environment-specific settings onto the shared base
     merged = _deep_merge(raw, env_settings)
-    print(f"DEBUG merged config keys: {list(merged.keys())}")  # Diagnostic output
+    logger.debug(f"DEBUG merged config keys: {list(merged.keys())}")  # Diagnostic output
     return _wrap_config(merged)
 
 

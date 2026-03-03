@@ -67,3 +67,33 @@ environments:
       aoi_polygon: "D:\\projects\\h3-origin-destination-matrix\\data\\raw\\raw.gdb\\scottsdale_1_hour_drive_time_buffered"
       h3_features: "D:\\projects\\arcgis-yelp\\data\\interim\\interim.gdb\\old_town_scottsdale_1_hour_h3_08_cnt"
       output_od_parquet: "D:\\projects\\h3-origin-destination-matrix\\data\\processed\\scottsdale_od_matrix_rural_drive_time_60_min\\parquet"
+
+  rivco_walk:
+    logging:
+      level: DEBUG
+    h3:
+      resolution: 10
+    network:
+      dataset: "D:\\data\\ba_data\\usa_2024\\Data\\StreetMap Premium Data\\northamerica.geodatabase\\main.Routing\\main.Routing_ND"
+      travel_mode: "Walking Distance"
+      snap_distance: 0.3989203
+      max_distance: 8.0
+      origin_batch_size: 500
+    data:
+      aoi_polygon: "D:\\projects\\h3-origin-destination-matrix\\data\\external\\rivco.gdb\\county"
+      output_od_parquet: "D:\\projects\\h3-origin-destination-matrix\\data\\processed\\rivco\\walk_parquet"
+
+  rivco_drive:
+    logging:
+      level: DEBUG
+    h3:
+      resolution: 10
+    network:
+      dataset: "D:\\data\\ba_data\\usa_2024\\Data\\StreetMap Premium Data\\northamerica.geodatabase\\main.Routing\\main.Routing_ND"
+      travel_mode: "Rural Driving Time"
+      snap_distance: 0.3989203
+      max_distance: 60.0
+      origin_batch_size: 120
+    data:
+      aoi_polygon: "D:\\projects\\h3-origin-destination-matrix\\data\\external\\rivco.gdb\\county"
+      output_od_parquet: "D:\\projects\\h3-origin-destination-matrix\\data\\processed\\rivco\\rural_drive_parquet"

@@ -180,6 +180,7 @@ def get_logger(
 
     return logger
 
+
 def format_pandas_for_logging(
     pandas_df: pd.DataFrame, title: str, line_tab_prefix="\t\t"
 ) -> None:

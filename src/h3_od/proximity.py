@@ -47,7 +47,7 @@ logger = get_logger("h3_od.proximity", level="DEBUG", add_stream_handler=False)
 
 
 def validate_h3_index_list(
-    input_features: List[Union[str, int]]
+    input_features: List[Union[str, int]],
 ) -> List[Tuple[str, arcpy.PointGeometry]]:
     """
     Validate and normalize a list of H3 indices into tuples of index strings and point geometries.
@@ -105,7 +105,7 @@ def validate_origin_destination_inputs(
         pd.DataFrame,
         str,
         Path,
-    ]
+    ],
 ) -> Union[arcpy._mp.Layer, str, arcpy.FeatureSet]:
     """
     Validate and normalize origin or destination input features for network analysis.
@@ -529,7 +529,13 @@ def _export_results_to_parquet(
                 # create a dictionary of the row data
                 row_dict = dict(
                     zip(
-                        ["h3_resolution", "origin_id", "destination_id", "distance_miles", "time"],
+                        [
+                            "h3_resolution",
+                            "origin_id",
+                            "destination_id",
+                            "distance_miles",
+                            "time",
+                        ],
                         row,
                     )
                 )
@@ -623,7 +629,9 @@ def get_origin_destination_parquet(
         Path to where Parquet dataset is saved.
     """
     # ensure parquet_path is a Path object
-    parquet_path = Path(parquet_path) if not isinstance(parquet_path, Path) else parquet_path
+    parquet_path = (
+        Path(parquet_path) if not isinstance(parquet_path, Path) else parquet_path
+    )
 
     # determine if parquet_path refers to a single file or a directory
     is_single_file = parquet_path.suffix == ".parquet" or (
@@ -667,7 +675,9 @@ def get_origin_destination_parquet(
             original_len = len(origin_h3_indices)
             if existing_origin_id_set:
                 origin_h3_indices = [
-                    idx for idx in origin_h3_indices if idx not in existing_origin_id_set
+                    idx
+                    for idx in origin_h3_indices
+                    if idx not in existing_origin_id_set
                 ]
                 logger.debug(
                     f"Only have to solve for {len(origin_h3_indices):,} origins instead of {original_len:,}."
@@ -677,11 +687,15 @@ def get_origin_destination_parquet(
             if destination_h3_indices is not None:
                 existing_dest_id_set = set(
                     pc.unique(
-                        existing_ds.to_table(columns=["destination_id"]).column("destination_id")
+                        existing_ds.to_table(columns=["destination_id"]).column(
+                            "destination_id"
+                        )
                     ).to_pylist()
                 )
                 destination_h3_indices = [
-                    idx for idx in destination_h3_indices if idx not in existing_dest_id_set
+                    idx
+                    for idx in destination_h3_indices
+                    if idx not in existing_dest_id_set
                 ]
                 logger.debug(
                     f"{len(existing_dest_id_set):,} destinations already present; "
@@ -707,7 +721,10 @@ def get_origin_destination_parquet(
     # create the schema to use for converting the list to a pyarrow table, required for saving to parquet
     pa_schema = pa.schema(
         [
-            pa.field("h3_resolution", pa.string() if isinstance(h3_resolution, str) else pa.int64()),
+            pa.field(
+                "h3_resolution",
+                pa.string() if isinstance(h3_resolution, str) else pa.int64(),
+            ),
             pa.field("origin_id", pa.string()),
             pa.field("destination_id", pa.string()),
             pa.field("distance_miles", pa.float64()),
@@ -728,13 +745,22 @@ def get_origin_destination_parquet(
 
         # solve the OD cost matrix for this batch
         result, _batch_dest_lst = _solve_batch(
-            batch_origin_lst, max_distance, network_dataset, travel_mode, search_distance
+            batch_origin_lst,
+            max_distance,
+            network_dataset,
+            travel_mode,
+            search_distance,
         )
 
         # export solve results to parquet
         _export_results_to_parquet(
-            result, batch_origin_lst, h3_resolution, pa_schema, parquet_path,
-            output_batch_size, batch_idx,
+            result,
+            batch_origin_lst,
+            h3_resolution,
+            pa_schema,
+            parquet_path,
+            output_batch_size,
+            batch_idx,
         )
 
     logger.info(
