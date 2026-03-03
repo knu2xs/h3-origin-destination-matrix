@@ -2,6 +2,13 @@ import datetime
 from pathlib import Path
 import importlib.util
 import sys
+import os
+
+# Environment name constant
+ENV_NAME = "rivco_walk"  # Change as needed
+
+# Set the environment variable before importing config
+os.environ["PROJECT_ENV"] = ENV_NAME
 
 # path to the root of the project
 dir_prj = Path(__file__).parent.parent
@@ -46,10 +53,10 @@ if __name__ == "__main__":
     log_pth = od_parquet.parent / f"od_solve_{dt_str}.log"
 
     # configure logging
-    logger = get_logger(logger_name=Path(__file__).stem, level=LOG_LEVEL, logfile_path=log_pth)
+    logger = get_logger(logger_name=f"{Path(__file__).stem}_{ENV_NAME}", level=LOG_LEVEL, logfile_path=log_pth)
 
     logger.info(
-        f"Solving origin-destination matrix using {network_dataset} using H3 resolution {h3_resolution}, and "
+        f"[ENV: {ENV_NAME}] Solving origin-destination matrix using {network_dataset} using H3 resolution {h3_resolution}, and "
         f"saving to {od_parquet}."
     )
 
