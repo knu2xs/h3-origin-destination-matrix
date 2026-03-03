@@ -22,30 +22,23 @@ if importlib.util.find_spec("h3_od") is None:
 # import h3_od
 import h3_od
 from h3_od.utils import get_logger
-from h3_od.config import (
-    LOG_LEVEL,
-    AOI_POLYGON,
-    OUTPUT_OD_PARQUET,
-    SNAP_DISTANCE,
-    NETWORK_DATASET,
-    TRAVEL_MODE,
-    MAX_DISTANCE,
-    ORIGIN_BATCH_SIZE,
-)
+from h3_od.config import load_config
 
 if __name__ == "__main__":
+    # Load olympia_walk config
+    config = load_config(environment="olympia_walk")
 
-    # resolve paths
-    aoi_features = Path(AOI_POLYGON)
-    od_parquet = Path(OUTPUT_OD_PARQUET)
-    network_dataset = Path(NETWORK_DATASET)
+    # resolve paths from olympia_walk config
+    aoi_features = Path(config.data.aoi_polygon)
+    od_parquet = Path(config.data.output_od_parquet)
+    network_dataset = Path(config.network.dataset)
 
     # path for saving logging
     dt_str = datetime.datetime.now().strftime("%Y%m%d%H%M")
     log_pth = od_parquet.parent / f"{Path(__file__).stem}_{dt_str}.log"
 
     # configure logging
-    logger = get_logger(logger_name=Path(__file__).stem, level=LOG_LEVEL, logfile_path=log_pth)
+    logger = get_logger(level=config.logging.level, logfile_path=log_pth)
 
     logger.info(
         f"Solving origin-destination matrix using {network_dataset} and saving to {od_parquet}."
@@ -55,10 +48,10 @@ if __name__ == "__main__":
     h3_od.proximity.get_aoi_h3_origin_destination_distance_parquet(
         area_of_interest=aoi_features,
         parquet_path=od_parquet,
-        h3_resolution=int(h3_od.config.H3_RESOLUTION),
+        h3_resolution=int(config.h3.resolution),
         network_dataset=network_dataset,
-        travel_mode=TRAVEL_MODE,
-        max_distance=MAX_DISTANCE,
-        search_distance=SNAP_DISTANCE,
-        origin_batch_size=ORIGIN_BATCH_SIZE,
+        travel_mode=config.network.travel_mode,
+        max_distance=config.network.max_distance,
+        search_distance=config.network.snap_distance,
+        origin_batch_size=config.network.origin_batch_size,
     )

@@ -65,9 +65,11 @@ class ConfigNode:
     def __init__(self, data: dict[str, Any] | None = None) -> None:
         data = data or {}
         for key, value in data.items():
+            # Recursively wrap dicts and lists
             if isinstance(value, dict):
                 value = ConfigNode(value)
-            # store on the instance __dict__ so attribute access works
+            elif isinstance(value, list):
+                value = [ConfigNode(v) if isinstance(v, dict) else v for v in value]
             object.__setattr__(self, key, value)
 
     # dict-style access -------------------------------------------------------
@@ -92,11 +94,20 @@ class ConfigNode:
         """Recursively convert back to a plain dictionary."""
         out: dict[str, Any] = {}
         for key, value in self.__dict__.items():
-            out[key] = value.to_dict() if isinstance(value, ConfigNode) else value
+            if isinstance(value, ConfigNode):
+                out[key] = value.to_dict()
+            elif isinstance(value, list):
+                out[key] = [v.to_dict() if isinstance(v, ConfigNode) else v for v in value]
+            else:
+                out[key] = value
         return out
 
+    def __getattr__(self, key: str) -> Any:
+        # Fallback for missing attributes
+        raise AttributeError(f"ConfigNode has no attribute '{key}'")
+
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({self.to_dict()!r})"
+        return f"ConfigNode({self.__dict__})"
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +161,15 @@ def get_available_environments(
     return sorted(raw.get("environments", {}).keys())
 
 
+def _wrap_config(data):
+    if isinstance(data, dict):
+        return ConfigNode({k: _wrap_config(v) for k, v in data.items()})
+    elif isinstance(data, list):
+        return [_wrap_config(v) for v in data]
+    else:
+        return data
+
+
 def load_config(
     config_path: Path | str | None = None,
     environment: str | None = None,
@@ -196,7 +216,8 @@ def load_config(
 
     # deep-merge environment-specific settings onto the shared base
     merged = _deep_merge(raw, env_settings)
-    return ConfigNode(merged)
+    print(f"DEBUG merged config keys: {list(merged.keys())}")  # Diagnostic output
+    return _wrap_config(merged)
 
 
 def load_secrets(
