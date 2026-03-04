@@ -11,7 +11,6 @@ import os
 
 # Third-party package imports
 import arcpy
-import pandas as pd
 import pyarrow.parquet as pq
 import pyarrow.dataset as ds
 
@@ -41,7 +40,101 @@ class Toolbox:
     def __init__(self):
         self.label = "H3 Origin Destination Matrix"
         self.alias = "h3_od_matrix"
-        self.tools = [AddDestinationDistance, GetH3Indices]
+        self.tools = [AddDestinationDistance, GetH3Indices, CreateOriginH3FeatureClass]
+
+
+class CreateOriginH3FeatureClass:
+    def __init__(self):
+        self.label = "Create Origin H3 Feature Class"
+        self.description = "Create a feature class of origin H3 indices from an OD matrix parquet dataset."
+        self.category = "Utilities"
+        logger_name = f"h3_od.Toolbox.{self.__class__.__name__}"
+        self.logger = get_logger(logger_name, level="INFO", add_arcpy_handler=True)
+
+    def getParameterInfo(self):
+        od_matrix = arcpy.Parameter(
+            displayName="H3 OD Matrix Parquet Dataset",
+            name="od_matrix",
+            datatype="DEFolder",
+            parameterType="Required",
+            direction="Input",
+        )
+        output_fc = arcpy.Parameter(
+            displayName="Output Feature Class (Polygons)",
+            name="output_fc",
+            datatype="DEFeatureClass",
+            parameterType="Required",
+            direction="Output",
+        )
+        return [od_matrix, output_fc]
+
+    def execute(self, parameters, messages):
+        od_matrix_folder = parameters[0].valueAsText
+        output_fc = parameters[1].valueAsText
+
+        # Only validate for .part files in the directory
+        if not os.path.isdir(od_matrix_folder):
+            self.logger.error("OD matrix must be a directory containing .part files.")
+            return
+
+        self.logger.info(f"Reading OD matrix from: {od_matrix_folder}")
+
+        part_files = [
+            f
+            for f in os.listdir(od_matrix_folder)
+            if f.lower().endswith(".part")
+            and os.path.isfile(os.path.join(od_matrix_folder, f))
+        ]
+
+        if not part_files:
+            self.logger.error(
+                "OD matrix directory must contain at least one .part file."
+            )
+            return
+
+        schema_path = os.path.join(od_matrix_folder, part_files[0])
+
+        # Efficiently read only the origin_id column
+        od_dataset = ds.dataset(schema_path, format="parquet")
+        origin_id_col = od_dataset.to_table(columns=["origin_id"]).column("origin_id")
+        unique_origin_ids = origin_id_col.unique().to_pylist()
+
+        if not unique_origin_ids:
+            self.logger.error("No origin H3 indices found in OD matrix.")
+            return
+
+        self.logger.info(f"Found {len(unique_origin_ids)} unique origin H3 indices.")
+
+        # Get resolution from first origin_id
+        resolution = h3_arcpy.get_h3_resolution(unique_origin_ids[0])
+        self.logger.info(f"Detected H3 resolution: {resolution}")
+
+        # Create output feature class (always WGS84)
+        sr = arcpy.SpatialReference(4326)
+        arcpy.management.CreateFeatureclass(
+            out_path=os.path.dirname(output_fc),
+            out_name=os.path.basename(output_fc),
+            geometry_type="POLYGON",
+            spatial_reference=sr,
+        )
+        arcpy.management.AddField(output_fc, "h3_index", "TEXT")
+
+        # Insert each geometry on the fly
+        with arcpy.da.InsertCursor(output_fc, ["SHAPE@", "h3_index"]) as cursor:
+
+            for h3_index in unique_origin_ids:
+
+                try:
+                    poly = h3_arcpy.get_arcpy_polygon_for_h3_index(h3_index)
+                    cursor.insertRow([poly, h3_index])
+
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to create/insert polygon for H3 index {h3_index}: {e}"
+                    )
+
+        self.logger.info(f"Created origin H3 polygons feature class: {output_fc}")
+        return
 
 
 class AddDestinationDistance:
@@ -204,61 +297,66 @@ class AddDestinationDistance:
         resolution = h3_arcpy.get_h3_resolution(first_origin)
         self.logger.info(f"Detected H3 resolution from OD matrix: {resolution}")
 
-        # Read input features to DataFrame
-        arr = arcpy.da.FeatureClassToNumPyArray(
-            input_features, ["SHAPE@"], skip_nulls=True
-        )
-
-        df_features = pd.DataFrame(arr)
-        df_features[distance_field] = None
-
+        # Prepare the list of fields to update in the cursor
+        update_fields = ["SHAPE@", distance_field]
         if time_field:
-            df_features[time_field] = None
+            update_fields.append(time_field)
 
-        # For each feature, get H3 index and lookup OD matrix
-        for idx, row in df_features.iterrows():
+        # Use UpdateCursor to iterate through each feature and update OD results
+        with arcpy.da.UpdateCursor(input_features, update_fields) as cursor:
+            for row in cursor:
 
-            geom = row["SHAPE@"]
-            h3_origin = h3_arcpy.get_h3_index_for_esri_geometry(geom, resolution)
+                # Get geometry and compute H3 index for the origin feature
+                geom = row[0]
+                h3_origin = h3_arcpy.get_h3_index_for_esri_geometry(geom, resolution)
 
-            try:
-                od_result = od_df[od_df["origin_id"] == h3_origin]
+                try:
+                    # Filter OD matrix for matching origin
+                    od_result = od_df[od_df["origin_id"] == h3_origin]
 
-                if h3_destination:
-                    od_result = od_result[od_result["destination_id"] == h3_destination]
-                if not od_result.empty:
+                    # If a destination is specified, further filter by destination
+                    if h3_destination:
+                        od_result = od_result[
+                            od_result["destination_id"] == h3_destination
+                        ]
 
-                    # If multiple records, sort by time if present, else by distance
-                    if len(od_result) > 1:
+                    # If a matching OD record is found, update the feature
+                    if not od_result.empty:
 
-                        if "time" in od_result.columns:
-                            od_result = od_result.sort_values("time")
-                            self.logger.info(
-                                f"Multiple records found for origin {h3_origin}. Sorted by 'time'. Using nearest."
-                            )
+                        # If multiple records, sort by time (if present) or by distance
+                        if len(od_result) > 1:
+                            if "time" in od_result.columns:
+                                od_result = od_result.sort_values("time")
+                                self.logger.debug(
+                                    f"Multiple records found for origin {h3_origin}. Sorted by 'time'. Using nearest."
+                                )
+                            else:
+                                od_result = od_result.sort_values("distance_miles")
+                                self.logger.debug(
+                                    f"Multiple records found for origin {h3_origin}. Sorted by 'distance_miles'. "
+                                    f"Using nearest."
+                                )
 
-                        else:
-                            od_result = od_result.sort_values("distance_miles")
-                            self.logger.info(
-                                f"Multiple records found for origin {h3_origin}. Sorted by 'distance_miles'. "
-                                f"Using nearest."
-                            )
+                        # Update the distance field
+                        row[update_fields.index(distance_field)] = od_result.iloc[0][
+                            "distance_miles"
+                        ]
 
-                    df_features.at[idx, distance_field] = od_result.iloc[0][
-                        "distance_miles"
-                    ]
+                        # Update the time field if enabled and present
+                        if time_field and "time" in od_result.columns:
+                            row[update_fields.index(time_field)] = od_result.iloc[0][
+                                "time"
+                            ]
 
-                    if time_field and "time" in od_result.columns:
-                        df_features.at[idx, time_field] = od_result.iloc[0]["time"]
+                        # Commit the update to the feature
+                        cursor.updateRow(row)
 
-            except Exception as e:
-                self.logger.warning(
-                    f"Failed to get OD distance for origin {h3_origin}: {e}"
-                )
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to get OD distance for origin {h3_origin}: {e}"
+                    )
 
-        self.logger.info(
-            f"Distance and time fields added to input features (not saved to disk by this tool)"
-        )
+        self.logger.info(f"Distance and time fields updated in input features.")
 
         return
 
@@ -267,7 +365,7 @@ class GetH3Indices:
     def __init__(self):
         self.label = "Get H3 Indices"
         self.description = "Get H3 indices for an area of interest polygon feature class, with options for selection method and centroid output."
-        self.category = "Analysis"
+        self.category = "Utilities"
         logger_name = f"h3_od.Toolbox.{self.__class__.__name__}"
         self.logger = get_logger(logger_name, level="INFO", add_arcpy_handler=True)
 
