@@ -174,8 +174,10 @@ class AddDestinationDistance:
             return
 
         part_files = [
-            f for f in os.listdir(od_matrix_folder)
-            if f.lower().endswith(".part") and os.path.isfile(os.path.join(od_matrix_folder, f))
+            f
+            for f in os.listdir(od_matrix_folder)
+            if f.lower().endswith(".part")
+            and os.path.isfile(os.path.join(od_matrix_folder, f))
         ]
 
         if not part_files:
@@ -242,7 +244,9 @@ class AddDestinationDistance:
                                 f"Using nearest."
                             )
 
-                    df_features.at[idx, distance_field] = od_result.iloc[0]["distance_miles"]
+                    df_features.at[idx, distance_field] = od_result.iloc[0][
+                        "distance_miles"
+                    ]
 
                     if time_field and "time" in od_result.columns:
                         df_features.at[idx, time_field] = od_result.iloc[0]["time"]
@@ -262,9 +266,7 @@ class AddDestinationDistance:
 class GetH3Indices:
     def __init__(self):
         self.label = "Get H3 Indices"
-        self.description = (
-            "Get H3 indices for an area of interest polygon feature class, with options for selection method and centroid output."
-        )
+        self.description = "Get H3 indices for an area of interest polygon feature class, with options for selection method and centroid output."
         self.category = "Analysis"
         logger_name = f"h3_od.Toolbox.{self.__class__.__name__}"
         self.logger = get_logger(logger_name, level="INFO", add_arcpy_handler=True)
@@ -295,7 +297,7 @@ class GetH3Indices:
         selection_method.filter.list = [
             "completely_within",
             "centroid_within",
-            "polygon_intersecting"
+            "polygon_intersecting",
         ]
         selection_method.value = "polygon_intersecting"
         output_fc = arcpy.Parameter(
@@ -313,14 +315,22 @@ class GetH3Indices:
             direction="Input",
         )
         create_centroids.value = False
-        return [input_aoi_features, h3_resolution, selection_method, output_fc, create_centroids]
+        return [
+            input_aoi_features,
+            h3_resolution,
+            selection_method,
+            output_fc,
+            create_centroids,
+        ]
 
     def execute(self, parameters, messages):
         input_aoi_features = parameters[0].valueAsText
         h3_resolution = int(parameters[1].value)
         selection_method = parameters[2].value
         output_fc = parameters[3].valueAsText
-        create_centroids = parameters[4].value if parameters[4].value is not None else False
+        create_centroids = (
+            parameters[4].value if parameters[4].value is not None else False
+        )
 
         self.logger.info(f"Input AOI features: {input_aoi_features}")
         self.logger.info(f"H3 resolution: {h3_resolution}")
@@ -329,17 +339,25 @@ class GetH3Indices:
         self.logger.info(f"Create centroids: {create_centroids}")
 
         # Read AOI polygons
-        arr = arcpy.da.FeatureClassToNumPyArray(input_aoi_features, ["SHAPE@"], skip_nulls=True)
+        arr = arcpy.da.FeatureClassToNumPyArray(
+            input_aoi_features, ["SHAPE@"], skip_nulls=True
+        )
         aoi_geoms = arr["SHAPE@"]
         h3_indices = set()
         for geom in aoi_geoms:
             try:
                 if selection_method == "completely_within":
-                    indices = h3_arcpy.get_h3_indices_for_esri_polygon(geom, h3_resolution, contain="full")
+                    indices = h3_arcpy.get_h3_indices_for_esri_polygon(
+                        geom, h3_resolution, contain="full"
+                    )
                 elif selection_method == "centroid_within":
-                    indices = h3_arcpy.get_h3_indices_for_esri_polygon(geom, h3_resolution, contain="center")
+                    indices = h3_arcpy.get_h3_indices_for_esri_polygon(
+                        geom, h3_resolution, contain="center"
+                    )
                 else:
-                    indices = h3_arcpy.get_h3_indices_for_esri_polygon(geom, h3_resolution, contain="overlap")
+                    indices = h3_arcpy.get_h3_indices_for_esri_polygon(
+                        geom, h3_resolution, contain="overlap"
+                    )
                 h3_indices.update(indices)
             except Exception as e:
                 self.logger.warning(f"Failed to get H3 indices for AOI polygon: {e}")
@@ -351,7 +369,9 @@ class GetH3Indices:
                 poly = h3_arcpy.get_arcpy_polygon_for_h3_index(h3_index)
                 polygons.append((h3_index, poly))
             except Exception as e:
-                self.logger.warning(f"Failed to create polygon for H3 index {h3_index}: {e}")
+                self.logger.warning(
+                    f"Failed to create polygon for H3 index {h3_index}: {e}"
+                )
 
         # Write polygons to output feature class
         sr = arcpy.Describe(input_aoi_features).spatialReference
@@ -384,6 +404,8 @@ class GetH3Indices:
                         centroid = h3_arcpy.get_arcpy_point_for_h3_index(h3_index)
                         cursor.insertRow([centroid, h3_index])
                     except Exception as e:
-                        self.logger.warning(f"Failed to create centroid for H3 index {h3_index}: {e}")
+                        self.logger.warning(
+                            f"Failed to create centroid for H3 index {h3_index}: {e}"
+                        )
             self.logger.info(f"Created centroids feature class: {centroid_fc}")
         return

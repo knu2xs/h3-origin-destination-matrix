@@ -222,7 +222,9 @@ def load_config(
 
     # deep-merge environment-specific settings onto the shared base
     merged = _deep_merge(raw, env_settings)
-    logger.debug(f"DEBUG merged config keys: {list(merged.keys())}")  # Diagnostic output
+    logger.debug(
+        f"DEBUG merged config keys: {list(merged.keys())}"
+    )  # Diagnostic output
     return _wrap_config(merged)
 
 

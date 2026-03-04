@@ -52,8 +52,8 @@ if __name__ == "__main__":
     dt_str = datetime.datetime.now().strftime("%Y%m%d%H%M")
     log_pth = od_parquet.parent / f"od_solve_{dt_str}.log"
 
-    # configure logging
-    logger = get_logger(logger_name=f"{Path(__file__).stem}_{ENV_NAME}", level=LOG_LEVEL, logfile_path=log_pth)
+    # configure logging - configure default logger to log to a file with the specified log level
+    logger = get_logger(level=LOG_LEVEL, logfile_path=log_pth, add_stream_handler=True)
 
     logger.info(
         f"[ENV: {ENV_NAME}] Solving origin-destination matrix using {network_dataset} using H3 resolution {h3_resolution}, and "
