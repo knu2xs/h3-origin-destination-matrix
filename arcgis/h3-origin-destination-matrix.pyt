@@ -41,7 +41,7 @@ class Toolbox:
     def __init__(self):
         self.label = "H3 Origin Destination Matrix"
         self.alias = "h3_od_matrix"
-        self.tools = [AddDestinationDistance]
+        self.tools = [AddDestinationDistance, GetH3Indices]
 
 
 class AddDestinationDistance:
@@ -256,4 +256,134 @@ class AddDestinationDistance:
             f"Distance and time fields added to input features (not saved to disk by this tool)"
         )
 
+        return
+
+
+class GetH3Indices:
+    def __init__(self):
+        self.label = "Get H3 Indices"
+        self.description = (
+            "Get H3 indices for an area of interest polygon feature class, with options for selection method and centroid output."
+        )
+        self.category = "Analysis"
+        logger_name = f"h3_od.Toolbox.{self.__class__.__name__}"
+        self.logger = get_logger(logger_name, level="INFO", add_arcpy_handler=True)
+
+    def getParameterInfo(self):
+        input_aoi_features = arcpy.Parameter(
+            displayName="Input AOI Polygon Features",
+            name="input_aoi_features",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input",
+        )
+        h3_resolution = arcpy.Parameter(
+            displayName="H3 Resolution",
+            name="h3_resolution",
+            datatype="GPLong",
+            parameterType="Required",
+            direction="Input",
+        )
+        selection_method = arcpy.Parameter(
+            displayName="Selection Method",
+            name="selection_method",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input",
+        )
+        selection_method.filter.type = "ValueList"
+        selection_method.filter.list = [
+            "completely_within",
+            "centroid_within",
+            "polygon_intersecting"
+        ]
+        selection_method.value = "polygon_intersecting"
+        output_fc = arcpy.Parameter(
+            displayName="Output Feature Class (Polygons)",
+            name="output_fc",
+            datatype="DEFeatureClass",
+            parameterType="Required",
+            direction="Output",
+        )
+        create_centroids = arcpy.Parameter(
+            displayName="Create Centroids Feature Class",
+            name="create_centroids",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            direction="Input",
+        )
+        create_centroids.value = False
+        return [input_aoi_features, h3_resolution, selection_method, output_fc, create_centroids]
+
+    def execute(self, parameters, messages):
+        input_aoi_features = parameters[0].valueAsText
+        h3_resolution = int(parameters[1].value)
+        selection_method = parameters[2].value
+        output_fc = parameters[3].valueAsText
+        create_centroids = parameters[4].value if parameters[4].value is not None else False
+
+        self.logger.info(f"Input AOI features: {input_aoi_features}")
+        self.logger.info(f"H3 resolution: {h3_resolution}")
+        self.logger.info(f"Selection method: {selection_method}")
+        self.logger.info(f"Output polygons feature class: {output_fc}")
+        self.logger.info(f"Create centroids: {create_centroids}")
+
+        # Read AOI polygons
+        arr = arcpy.da.FeatureClassToNumPyArray(input_aoi_features, ["SHAPE@"], skip_nulls=True)
+        aoi_geoms = arr["SHAPE@"]
+        h3_indices = set()
+        for geom in aoi_geoms:
+            try:
+                if selection_method == "completely_within":
+                    indices = h3_arcpy.get_h3_indices_for_esri_polygon(geom, h3_resolution, contain="full")
+                elif selection_method == "centroid_within":
+                    indices = h3_arcpy.get_h3_indices_for_esri_polygon(geom, h3_resolution, contain="center")
+                else:
+                    indices = h3_arcpy.get_h3_indices_for_esri_polygon(geom, h3_resolution, contain="overlap")
+                h3_indices.update(indices)
+            except Exception as e:
+                self.logger.warning(f"Failed to get H3 indices for AOI polygon: {e}")
+
+        # Create polygons from H3 indices
+        polygons = []
+        for h3_index in h3_indices:
+            try:
+                poly = h3_arcpy.get_arcpy_polygon_for_h3_index(h3_index)
+                polygons.append((h3_index, poly))
+            except Exception as e:
+                self.logger.warning(f"Failed to create polygon for H3 index {h3_index}: {e}")
+
+        # Write polygons to output feature class
+        sr = arcpy.Describe(input_aoi_features).spatialReference
+        arcpy.management.CreateFeatureclass(
+            out_path=os.path.dirname(output_fc),
+            out_name=os.path.basename(output_fc),
+            geometry_type="POLYGON",
+            spatial_reference=sr,
+        )
+        arcpy.management.AddField(output_fc, "h3_index", "TEXT")
+        with arcpy.da.InsertCursor(output_fc, ["SHAPE@", "h3_index"]) as cursor:
+            for h3_index, poly in polygons:
+                cursor.insertRow([poly, h3_index])
+
+        self.logger.info(f"Created polygons feature class: {output_fc}")
+
+        # Optionally create centroids feature class
+        if create_centroids:
+            centroid_fc = output_fc + "_centroids"
+            arcpy.management.CreateFeatureclass(
+                out_path=os.path.dirname(centroid_fc),
+                out_name=os.path.basename(centroid_fc),
+                geometry_type="POINT",
+                spatial_reference=sr,
+            )
+            arcpy.management.AddField(centroid_fc, "h3_index", "TEXT")
+            with arcpy.da.InsertCursor(centroid_fc, ["SHAPE@", "h3_index"]) as cursor:
+                for h3_index in h3_indices:
+                    try:
+                        centroid = h3_arcpy.get_arcpy_point_for_h3_index(h3_index)
+                        cursor.insertRow([centroid, h3_index])
+                    except Exception as e:
+                        self.logger.warning(f"Failed to create centroid for H3 index {h3_index}: {e}")
+            self.logger.info(f"Created centroids feature class: {centroid_fc}")
         return
